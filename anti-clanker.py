@@ -35,7 +35,7 @@ def load_file(file : Path):
     return {}
 strikes = load_file(STRIKES_FILE)
 training = load_file(TRAINING_FILE)
-ignored = load_file(IGNORE_FILE)
+ignored = load_file(IGNORE_FILE).get("users", [])
 def save_file(data, file: Path):
     file.write_text(json.dumps(data))
 
@@ -70,27 +70,9 @@ def remove_member(group_id, membership_id):
     r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
-def delete_message(conversation_id, message_id):
-    '''
-    DELETE /v3/conversations/96533528/messages/175816641513250828 HTTP/2
-    Host: api.groupme.com
-    Sec-Ch-Ua-Platform: "Linux"
-    Accept-Language: en-US,en;q=0.9
-    Sec-Ch-Ua: "Not.A/Brand";v="99", "Chromium";v="136"
-    Sec-Ch-Ua-Mobile: ?0
-    X-Access-Token: h5856vWgNFYpy9JILQxHX9M9T1NXVf518iTTL0S8
-    X-Requested-With: GroupMeWeb/7.23.13-20250912.2
-    User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36
-    Accept: application/json, text/plain, */*
-    Origin: https://web.groupme.com
-    Sec-Fetch-Site: same-site
-    Sec-Fetch-Mode: cors
-    Sec-Fetch-Dest: empty
-    Referer: https://web.groupme.com/
-    Accept-Encoding: gzip, deflate, br
-    Priority: u=1, i
-    '''
-    url = f"{BASE}/conversations/{conversation_id}/messages/{message_id}"
+def delete_message(group_id, message_id):
+    #DELETE /conversations/:group_id/messages/:message_id
+    url = f"{BASE}/conversations/{group_id}/messages/{message_id}"
     r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
@@ -99,12 +81,22 @@ def post_bot_message(text):
     payload = {"bot_id": BOT_AUTH_ID, "text": text}
     requests.post(url, json=payload, timeout=10)
 
-def like_message(conversation_id, message_id):
-    #POST /messages/:conversation_id/:message_id/like
-    if not conversation_id or not message_id:
-        return False
-    url = f"{BASE}/messages/{conversation_id}/{message_id}/like"
-    r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
+def like_message(group_id, message_id):
+    '''POST /messages/:group_id/:message_id/like
+    {
+    "like_icon": {
+        "type": "unicode",
+        "code": "❤️"
+        }
+    }'''
+    url = f"{BASE}/messages/{group_id}/{message_id}/like"
+    payload = {
+        "like_icon": {
+            "type": "unicode",
+            "code": "❤️"
+        }
+    }
+    r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
 def check_model_availability() -> bool:
@@ -203,22 +195,20 @@ async def callback(request: Request):
     if user_id == "0" or user_id == BOT_ID:
         return {"status": "ignored"}
 
-    conversation_id = payload.get("conversation_id", None)
     name = payload.get("name", "Unknown")
     text = payload.get("text", "")
+    group_id = payload.get("group_id")
+    message_id = payload.get("id")
 
-    print(f"📩 Message from {name}/{user_id}/{conversation_id}: '{text}'")
+    print(f"📩 Message from {name}/{user_id}: '{text}'")
 
-    if user_id in ignored.get("users", []):
+    if int(user_id) in ignored:
         print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
-        like_message(conversation_id, message_id)
+        like_message(group_id, message_id)
         return {"status": "ignored"}
 
     if not text or not contains_banned(text):
         return {"status": "ok"}
-
-    group_id = payload.get("group_id")
-    message_id = payload.get("id")
 
     print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'")
     key = f"{user_id}:{name}"
@@ -227,7 +217,7 @@ async def callback(request: Request):
 
     if strikes[key] <= WARN_STRIKES:
         post_bot_message(f"@{name}, warning: banned word detected, issuing strike {strikes[key]} of {WARN_STRIKES}.")
-        print(f"🗑️ Delete message from {name} success: {delete_message(conversation_id, message_id)}")
+        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
         print(f"⚠️ Warning issued to {name} (strike {strikes[key]})")
     else:
         membership_id, _ = get_membership_id(group_id, user_id)
