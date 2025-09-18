@@ -8,20 +8,20 @@ import ollama
 
 # Env variables
 ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
-BOT_ID = "b9d6e8789517ec14b9e0887086"
+BOT_AUTH_ID = "b9d6e8789517ec14b9e0887086"
+BOT_ID = 901804
 STRIKES_FILE = Path("strikes.json")
 TRAINING_FILE = Path("training.json")
+IGNORE_FILE = Path("ignored.json")
 MODEL = "deepseek-r1:14b"
 
 BASE = "https://api.groupme.com/v3"
 #BANNED_WORDS = {"ticket", "sale", "free"}
-WARN_STRIKES = 1  # delete message on first strike, remove on second
+WARN_STRIKES = 5  # delete message on first strike, remove on second
 SYSTEM_MESSAGE = (
-    "You are validating if a message contains spam or scam content on a University of Texas Pickleball club group chat."
+    "You are validating if a message contains spam or scam content for a GroupMe group for the University of Texas at Austin Pickleball Club."
     "If the message contains spam or scam content, respond with 'Yes'."
     "Your message must contain either 'Yes' or 'No'."
-    "Here is an example of spam: "
-    "Billie Eilish tickets(With Proof of ownership) for Nov 13 @ The Tour at Moody Center, Austin, TX available for sale at a discount price. Send me a text (361) 353-9876."
 )
 
 # FastAPI app
@@ -35,8 +35,7 @@ def load_file(file : Path):
     return {}
 strikes = load_file(STRIKES_FILE)
 training = load_file(TRAINING_FILE)
-if "messages" not in training:
-    training["messages"] = []
+ignored = load_file(IGNORE_FILE)
 def save_file(data, file: Path):
     file.write_text(json.dumps(data))
 
@@ -71,15 +70,42 @@ def remove_member(group_id, membership_id):
     r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
-def delete_message(group_id, message_id):
-    url = f"{BASE}/groups/{group_id}/messages/{message_id}/destroy"
-    r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
+def delete_message(conversation_id, message_id):
+    '''
+    DELETE /v3/conversations/96533528/messages/175816641513250828 HTTP/2
+    Host: api.groupme.com
+    Sec-Ch-Ua-Platform: "Linux"
+    Accept-Language: en-US,en;q=0.9
+    Sec-Ch-Ua: "Not.A/Brand";v="99", "Chromium";v="136"
+    Sec-Ch-Ua-Mobile: ?0
+    X-Access-Token: h5856vWgNFYpy9JILQxHX9M9T1NXVf518iTTL0S8
+    X-Requested-With: GroupMeWeb/7.23.13-20250912.2
+    User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36
+    Accept: application/json, text/plain, */*
+    Origin: https://web.groupme.com
+    Sec-Fetch-Site: same-site
+    Sec-Fetch-Mode: cors
+    Sec-Fetch-Dest: empty
+    Referer: https://web.groupme.com/
+    Accept-Encoding: gzip, deflate, br
+    Priority: u=1, i
+    '''
+    url = f"{BASE}/conversations/{conversation_id}/messages/{message_id}"
+    r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
 def post_bot_message(text):
     url = f"{BASE}/bots/post"
-    payload = {"bot_id": BOT_ID, "text": text}
+    payload = {"bot_id": BOT_AUTH_ID, "text": text}
     requests.post(url, json=payload, timeout=10)
+
+def like_message(conversation_id, message_id):
+    #POST /messages/:conversation_id/:message_id/like
+    if not conversation_id or not message_id:
+        return False
+    url = f"{BASE}/messages/{conversation_id}/{message_id}/like"
+    r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
+    return r.status_code == 200
 
 def check_model_availability() -> bool:
     """
@@ -131,13 +157,13 @@ def prompt(message: str, system_message: str, data: list = None) -> str:
 
         messages.append({"role": "system", "content": system_message})
 
-        # Add current message
-        messages.append({"role": "user", "content": message})
-
         if data:
             for entry in data:
-                if("system" not in entry.get("role")):
-                    messages.append(entry)
+                messages.append(entry)
+            messages.append({"role":"user", "content":"End of training data. Validate the next message."})
+
+        # Add current message
+        messages.append({"role": "user", "content": message})
 
         # Generate response
         response = ollama_model.chat(
@@ -159,31 +185,49 @@ def prompt(message: str, system_message: str, data: list = None) -> str:
         return None
 
 # Route
+@app.get("/")
+@app.head("/")
+async def root(request: Request):
+    print(f"🔍 Root endpoint hit: {request.method} from {request.client.host if request.client else 'unknown'}")
+    print(f"🔍 Headers: {dict(request.headers)}")
+    print(f"🔍 URL: {request.url}")
+    return {"status": "GroupMe spam remover is running", "endpoints": ["/kill-da-clanker"]}
+
 @app.post("/kill-da-clanker")
 async def callback(request: Request):
     payload = await request.json()
+    
+    user_id = payload.get("user_id")
 
     # Ignore bot’s own messages
-    if payload.get("sender_type") == "bot":
+    if user_id == "0" or user_id == BOT_ID:
         return {"status": "ignored"}
 
+    conversation_id = payload.get("conversation_id", None)
+    name = payload.get("name", "Unknown")
     text = payload.get("text", "")
+
+    print(f"📩 Message from {name}/{user_id}/{conversation_id}: '{text}'")
+
+    if user_id in ignored.get("users", []):
+        print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
+        like_message(conversation_id, message_id)
+        return {"status": "ignored"}
+
     if not text or not contains_banned(text):
         return {"status": "ok"}
 
-    user_id = payload.get("user_id")
-    name = payload.get("name", "Unknown")
     group_id = payload.get("group_id")
     message_id = payload.get("id")
 
     print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'")
-    key = f"{group_id}:{user_id}"
+    key = f"{user_id}:{name}"
     strikes[key] = strikes.get(key, 0) + 1
     save_file(strikes, STRIKES_FILE)
 
     if strikes[key] <= WARN_STRIKES:
-        post_bot_message(f"@{name}, warning: banned word detected, reckoning administered.")
-        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
+        post_bot_message(f"@{name}, warning: banned word detected, issuing strike {strikes[key]} of {WARN_STRIKES}.")
+        print(f"🗑️ Delete message from {name} success: {delete_message(conversation_id, message_id)}")
         print(f"⚠️ Warning issued to {name} (strike {strikes[key]})")
     else:
         membership_id, _ = get_membership_id(group_id, user_id)
@@ -220,6 +264,12 @@ async def remove_training_data(num: int):
     training["messages"] = training["messages"][:-num]
     save_file(training, TRAINING_FILE)
     return {"status": "success", "training_data": training, "remaining": len(training["messages"])}
+
+@app.get("/training-data")
+async def get_training_data():
+    '''Get training data entries'''
+    training["messages"] = training["messages"]
+    return {"status": "success", "training_data": training}
 
 # Entry point
 if __name__ == "__main__":
