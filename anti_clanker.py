@@ -1,10 +1,11 @@
-import os
 import json
 from pathlib import Path
 from fastapi import FastAPI, Request
 import requests
 import uvicorn
 import ollama
+from threading import Thread
+from time import sleep
 
 # Env variables
 ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
@@ -19,6 +20,7 @@ MODEL = "deepseek-r1:14b"
 BASE = "https://api.groupme.com/v3"
 #BANNED_WORDS = {"ticket", "sale", "free"}
 WARN_STRIKES = 1  # delete message on first strike, remove on second
+WAIT = 30  # seconds to wait before checking subgroups for spam
 SYSTEM_MESSAGE = (
     "You are validating if a message contains spam or scam content for a GroupMe group for the University of Texas at Austin Pickleball Club."
     "If the message contains spam or scam content, respond with 'Yes'."
@@ -99,14 +101,31 @@ def remove_member(group_id, membership_id):
 
 def delete_message(group_id, message_id):
     #DELETE /conversations/:group_id/messages/:message_id
+    r = None
     url = f"{BASE}/conversations/{group_id}/messages/{message_id}"
     r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code == 200
+    return r.status_code
 
 def post_bot_message(text):
     url = f"{BASE}/bots/post"
     payload = {"bot_id": BOT_AUTH_ID, "text": text}
     requests.post(url, json=payload, timeout=10)
+
+def get_subgroups(group_id):
+    """GET /groups/:group_id/subgroups - Get all subgroups for a group"""
+    url = f"{BASE}/groups/{group_id}/subgroups"
+    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
+    if r.status_code == 200:
+        return r.json().get("response", [])
+    return []
+
+def get_subgroup_details(group_id, subgroup_id):
+    """GET /groups/:group_id/subgroups/:subgroup_id - Get subgroup details including last message"""
+    url = f"{BASE}/groups/{group_id}/subgroups/{subgroup_id}"
+    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
+    if r.status_code == 200:
+        return r.json().get("response", {})
+    return {}
 
 def like_message(group_id, message_id):
     '''POST /messages/:group_id/:message_id/like
@@ -177,6 +196,9 @@ def prompt(message: str, system_message: str, data: list = None, train : bool = 
         messages.append({"role": "system", "content": system_message})
 
         if data:
+            if train:
+                messages.append({"role":"user", "content":"Here is some training data to help you understand spam detection."})
+
             for entry in data:
                 messages.append(entry)
 
@@ -237,6 +259,55 @@ def thanos(name, user_id, text):
     
     return {"status": "bot_mentioned"}
 
+def reckon(name, user_id, text, group_id, message_id):
+    print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'")
+    key = f"{user_id}:{name}"
+    strikes[key] = strikes.get(key, 0) + 1
+    save_file(strikes, STRIKES_FILE)
+
+    if strikes[key] <= WARN_STRIKES:
+        post_bot_message(f"@{name}, warning: spam detected, issueing reckoning {strikes[key]} of {WARN_STRIKES}.")
+        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
+        print(f"⚠️ Warning issued to {name} (strike {strikes[key]})")
+    else:
+        membership_id, _ = get_membership_id(group_id, user_id)
+        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
+        if membership_id:# and remove_member(group_id, membership_id):
+            post_bot_message(f"@{name} has been thanos snapped.")
+            strikes.pop(key, None)
+            save_file(strikes, STRIKES_FILE)
+            print(f"🗑️ Removed {name} from group.")
+        else:
+            post_bot_message(f"Failed to remove @{name}, please snap manually.")
+            print(f"❌ Failed to remove {name}, membership ID not found.")
+
+def subgroup_reckon_worker(name, user_id, group_id):
+    print(f"⏳ Waiting {WAIT} seconds before checking subgroups...")
+    sleep(WAIT)  # Wait for bot to post spam message
+    print("🔍 Checking subgroups for spam messages...")
+    subgroups = get_subgroups(group_id)
+    for subgroup in subgroups:
+        last_message_id = subgroup.get("messages").get("last_message_id")
+        last_message = subgroup.get("messages").get("preview").get("text", "")
+        name = subgroup.get("messages").get("preview").get("nickname", "Unknown")
+
+        print(f"📩 Message from {name}: '{last_message}'")
+
+        if name == "Day of Reckoning":
+            print("🚫 Ignored bot message.")
+            return {"status": "ignored"}
+
+        if any(keyword in last_message.lower() for keyword in ["@thanos", "joined", "left"]):
+            print("🚫 Ignored bot/system message.")
+            return {"status": "ignored"}
+
+        if "Krish" in name:
+            print("🚫 Ignored user Krish.")
+            return {"status": "ignored"}
+        
+        if contains_banned(last_message):
+            reckon(name, user_id, last_message, group_id, last_message_id)
+
 # Route
 @app.get("/")
 @app.head("/")
@@ -253,7 +324,7 @@ async def callback(request: Request):
     user_id = payload.get("user_id")
 
     # Ignore bot’s own messages
-    if user_id == "0" or user_id == BOT_ID:
+    if user_id == "0" or user_id == str(BOT_ID):
         return {"status": "ignored"}
 
     name = payload.get("name", "Unknown")
@@ -265,6 +336,7 @@ async def callback(request: Request):
 
     if "@thanos" in text.lower():
         thanos(name, user_id, text)
+        return {"status": "bot_mentioned"}
 
     if int(user_id) in ignored:
         print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
@@ -274,26 +346,9 @@ async def callback(request: Request):
     if not text or not contains_banned(text):
         return {"status": "ok"}
 
-    print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'")
-    key = f"{user_id}:{name}"
-    strikes[key] = strikes.get(key, 0) + 1
-    save_file(strikes, STRIKES_FILE)
+    reckon(name, user_id, text, group_id, message_id)
 
-    if strikes[key] <= WARN_STRIKES:
-        post_bot_message(f"@{name}, warning: spam detected, issueing reckoning {strikes[key]} of {WARN_STRIKES}.")
-        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
-        print(f"⚠️ Warning issued to {name} (strike {strikes[key]})")
-    else:
-        membership_id, _ = get_membership_id(group_id, user_id)
-        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
-        if membership_id and remove_member(group_id, membership_id):
-            post_bot_message(f"@{name} has been thanos snapped.")
-            strikes.pop(key, None)
-            save_file(strikes, STRIKES_FILE)
-            print(f"🗑️ Removed {name} from group.")
-        else:
-            post_bot_message(f"Failed to remove @{name}, please snap manually.")
-            print(f"❌ Failed to remove {name}, membership ID not found.")
+    Thread(target=subgroup_reckon_worker, args=(name, user_id, group_id)).start()
 
     return {"status": "processed"}
 

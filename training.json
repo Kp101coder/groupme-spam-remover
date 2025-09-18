@@ -63,6 +63,14 @@
         {
             "role": "assistant",
             "content": "True"
+        },
+        {
+            "role": "user",
+            "content": "Hey I’m selling tate mc Rae tickets dm me if you are interested."
+        },
+        {
+            "role": "assistant",
+            "content": "True"
         }
     ]
 }
