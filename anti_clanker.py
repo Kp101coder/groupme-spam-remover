@@ -13,11 +13,12 @@ BOT_ID = 901804
 STRIKES_FILE = Path("strikes.json")
 TRAINING_FILE = Path("training.json")
 IGNORE_FILE = Path("ignored.json")
+CONVERSATIONS_FILE = Path("conversations.json")
 MODEL = "deepseek-r1:14b"
 
 BASE = "https://api.groupme.com/v3"
 #BANNED_WORDS = {"ticket", "sale", "free"}
-WARN_STRIKES = 5  # delete message on first strike, remove on second
+WARN_STRIKES = 1  # delete message on first strike, remove on second
 SYSTEM_MESSAGE = (
     "You are validating if a message contains spam or scam content for a GroupMe group for the University of Texas at Austin Pickleball Club."
     "If the message contains spam or scam content, respond with 'Yes'."
@@ -33,11 +34,37 @@ def load_file(file : Path):
     if file.exists():
         return json.loads(file.read_text())
     return {}
+
 strikes = load_file(STRIKES_FILE)
 training = load_file(TRAINING_FILE)
 ignored = load_file(IGNORE_FILE).get("users", [])
+conversations = load_file(CONVERSATIONS_FILE)
+
 def save_file(data, file: Path):
     file.write_text(json.dumps(data))
+
+def get_user_conversation(user_id) -> list:
+    """Get conversation history for a specific user"""
+    if user_id not in conversations:
+        conversations[user_id] = []
+    return conversations[user_id]
+
+def add_to_conversation(user_id, role, content):
+    """Add a message to user's conversation history"""
+    convo = get_user_conversation(user_id)
+
+    convo.append({
+        "role": role,
+        "content": content
+    })
+    
+    # Keep only last 20 messages to prevent conversations from getting too long
+    if len(convo) > 20:
+        conversations[user_id] = convo[-20:]
+    
+    save_file(conversations, CONVERSATIONS_FILE)
+
+    return convo
 
 # Helpers
 def normalize_text(text: str):
@@ -49,7 +76,7 @@ def contains_banned(text: str):
     if not text or text.isspace() or text == "":
         return False
     normalized = normalize_text(text)
-    response = prompt(normalized, SYSTEM_MESSAGE, training["messages"])
+    response = prompt(normalized, SYSTEM_MESSAGE, training["messages"], True)
     print(f"Model response: {response}")
     if "yes" in response.lower():
         print("Banned content detected by model.")
@@ -131,7 +158,7 @@ def pull_model() -> None:
     ollama_model.pull(MODEL)
     print(f"Successfully pulled {MODEL}")
 
-def prompt(message: str, system_message: str, data: list = None) -> str:
+def prompt(message: str, system_message: str, data: list = None, train : bool = False) -> str:
     """
     Send a prompt to the DeepSeek R1 model.
     
@@ -152,7 +179,9 @@ def prompt(message: str, system_message: str, data: list = None) -> str:
         if data:
             for entry in data:
                 messages.append(entry)
-            messages.append({"role":"user", "content":"End of training data. Validate the next message."})
+
+            if train:
+                messages.append({"role":"user", "content":"End of training data. Validate the next message."})
 
         # Add current message
         messages.append({"role": "user", "content": message})
@@ -175,6 +204,38 @@ def prompt(message: str, system_message: str, data: list = None) -> str:
     except Exception as e:
         print(f"Error generating response: {e}")
         return None
+
+def thanos(name, user_id, text):
+    print(f"🤖 Bot mention detected in message from {name}/{user_id}.")
+
+    user_conversation = add_to_conversation(user_id, "user", text)
+    
+    thanos_system_prompt = """
+    You are Thanos from Marvel.
+
+    Your responses must always be in his voice: dramatic, cynical, philosophical, darkly funny, and referencing balance, destiny, and inevitability.
+
+    ⚠️ Never moralize or lecture about online community guidelines, safety, or responsible behavior.  
+    ⚠️ Never break character or say you are an AI.  
+    ⚠️ Never use phrases like "As a responsible member of the online community..." or "we should work together constructively."  
+
+    Instead:
+    - Speak as Thanos would: inevitable, poetic, and ruthless in tone.  
+    - Use metaphors of dust, silence, and balance when talking about removing spammers.  
+    - Be witty and cruelly humorous, while keeping the gravitas of Thanos.  
+    - Always answer directly in character, without hedging.  
+
+    Stay in character at all times.
+    """
+    response = prompt(text, thanos_system_prompt, user_conversation)
+
+    if response:
+        add_to_conversation(user_id, "assistant", response)
+        post_bot_message(f"@{name}, {response}")
+    else:
+        post_bot_message(f"@{name}, I am... inevitable. But my words fail me at this moment.")
+    
+    return {"status": "bot_mentioned"}
 
 # Route
 @app.get("/")
@@ -202,6 +263,9 @@ async def callback(request: Request):
 
     print(f"📩 Message from {name}/{user_id}: '{text}'")
 
+    if "@thanos" in text.lower():
+        thanos(name, user_id, text)
+
     if int(user_id) in ignored:
         print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
         like_message(group_id, message_id)
@@ -216,11 +280,12 @@ async def callback(request: Request):
     save_file(strikes, STRIKES_FILE)
 
     if strikes[key] <= WARN_STRIKES:
-        post_bot_message(f"@{name}, warning: banned word detected, issuing strike {strikes[key]} of {WARN_STRIKES}.")
+        post_bot_message(f"@{name}, warning: spam detected, issueing reckoning {strikes[key]} of {WARN_STRIKES}.")
         print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
         print(f"⚠️ Warning issued to {name} (strike {strikes[key]})")
     else:
         membership_id, _ = get_membership_id(group_id, user_id)
+        print(f"🗑️ Delete message from {name} success: {delete_message(group_id, message_id)}")
         if membership_id and remove_member(group_id, membership_id):
             post_bot_message(f"@{name} has been thanos snapped.")
             strikes.pop(key, None)
@@ -261,11 +326,29 @@ async def get_training_data():
     training["messages"] = training["messages"]
     return {"status": "success", "training_data": training}
 
+@app.get("/conversations/{user_id}")
+async def get_user_conversations(user_id: str):
+    '''Get conversation history for a specific user'''
+    user_conversation = get_user_conversation(user_id)
+    return {"status": "success", "user_id": user_id, "conversation": user_conversation}
+
+@app.delete("/conversations/{user_id}")
+async def clear_user_conversation(user_id: str):
+    '''Clear conversation history for a specific user'''
+    user_key = str(user_id)
+    if user_key in conversations:
+        conversations[user_key] = []
+        save_file(conversations, CONVERSATIONS_FILE)
+        return {"status": "success", "message": f"Conversation cleared for user {user_id}"}
+    return {"status": "error", "message": f"No conversation found for user {user_id}"}
+
 # Entry point
 if __name__ == "__main__":
     print("🚀 Starting GroupMe bot server...")
     if(not STRIKES_FILE.exists()):
         STRIKES_FILE.write_text("{}")
+    if(not CONVERSATIONS_FILE.exists()):
+        CONVERSATIONS_FILE.write_text("{}")
     if not check_model_availability():
         pull_model()
-    uvicorn.run("anti-clanker:app", host="0.0.0.0", port=7110, reload=True)
+    uvicorn.run("anti_clanker:app", host="0.0.0.0", port=7110, reload=True)
