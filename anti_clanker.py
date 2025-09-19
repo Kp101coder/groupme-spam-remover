@@ -6,6 +6,7 @@ import uvicorn
 import ollama
 from threading import Thread
 from time import sleep
+import uuid
 
 # Env variables
 ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
@@ -282,6 +283,30 @@ def ban(membership_id):
     r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
+def send_dm(user_id, text):
+    '''POST /direct_messages
+    {
+        "direct_message": {
+            "source_guid": "GUID",
+            "recipient_id": "20",
+            "text": "Hello world ",
+            "attachments": [
+            ]
+        }
+    }'''
+    unique_guid = str(uuid.uuid4())
+    print(f"Sending DM to from bot: {text} with GUID {unique_guid}")
+    url = f"{BASE}/direct_messages"
+    payload = {
+        "direct_message": {
+            "source_guid": unique_guid,
+            "recipient_id": user_id,
+            "text": text + "\n [This action was performed automatically by a bot]"
+        }
+    }
+    r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
+    return r.status_code == 201
+
 def thanos(name, user_id, text):
     print(f"🤖 Bot mention detected in message from {name}/{user_id}.")
 
@@ -337,7 +362,7 @@ def reckon(name, user_id, text, message_id):
     save_file(strikes, STRIKES_FILE)
 
     if strikes[user_id] <= WARN_STRIKES:
-        post_bot_message(f"@{name}, warning: spam detected, issueing reckoning {strikes[user_id]} of {WARN_STRIKES}.")
+        send_dm(user_id, f"@{name}, warning: spam detected, issueing reckoning {strikes[user_id]} of {WARN_STRIKES}.")
         print(f"🗑️ Delete message from {name} success: {delete_message(message_id)}")
         print(f"⚠️ Warning issued to {name} (strike {strikes[user_id]})")
         last_action = {"action": "strike", "user": name, "user_id": user_id}
@@ -347,6 +372,7 @@ def reckon(name, user_id, text, message_id):
         last_action = {"action": "remove", "user": name, "user_id": user_id}
         if membership_id and remove_member(membership_id):
             post_bot_message(f"@{name} has been thanos snapped.")
+            send_dm(user_id, f"@{name}, you have been removed from the group due to repeated spam violations.\nDM an admin to be reconsidered for rejoining.")
             strikes.pop(user_id, None)
             save_file(strikes, STRIKES_FILE)
             print(f"🗑️ Removed {name} from group.")
