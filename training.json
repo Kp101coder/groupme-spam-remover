@@ -42,6 +42,14 @@
         },
         {
             "role": "user",
+            "content": "I’m selling 4 TX/OU and 3 Sam houston tickets dm me if you’re interested"
+        },
+        {
+            "role": "assistant",
+            "content": "True"
+        },
+        {
+            "role": "user",
             "content": "Someone be a test subject \ud83d\ude02"
         },
         {
@@ -67,6 +75,14 @@
         {
             "role": "user",
             "content": "Hey I’m selling tate mc Rae tickets dm me if you are interested."
+        },
+        {
+            "role": "assistant",
+            "content": "True"
+        },
+        {
+            "role": "user",
+            "content": "Selling 2 Sam Houston , Florida and season pass tickets for all the rest home games, anyone interested should text me : +1 229-707-2755"
         },
         {
             "role": "assistant",
