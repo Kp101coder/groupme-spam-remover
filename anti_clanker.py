@@ -7,6 +7,7 @@ import ollama
 from threading import Thread
 from time import sleep
 import uuid
+import re
 
 # Env variables
 ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
@@ -26,9 +27,15 @@ BASE = "https://api.groupme.com/v3"
 WARN_STRIKES = 1  # delete message on first strike, remove on second
 WAIT = 30  # seconds to wait before checking subgroups for spam
 SYSTEM_MESSAGE = (
-    "You are validating if a message contains spam or scam content for a GroupMe group for the University of Texas at Austin Pickleball Club."
-    "If the message contains spam or scam content, respond with 'Yes'."
-    "Your message must contain either 'Yes' or 'No'."
+    "You are a strict binary classifier for messages in the UT Austin Pickleball Club GroupMe.\n"
+    "Task: Determine if a message is spam relevant to the group. Output exactly one word: Yes or No. No punctuation, no explanations.\n\n"
+    "Label as Yes (spam) when the message is about buying/selling/trading tickets or passes for events unrelated to the club, especially if it includes phone numbers, 'text/DM me', prices, or payment apps (Venmo, Cash App, Zelle, PayPal). Also treat ticket giveaways/resales and bulk season tickets as spam.\n\n"
+    "Label as No (not spam) for: normal conversation, club announcements, practice or event info, officer communications (including asking members to text or Venmo/Zelle for club dues/fees/merch), and posts clearly tied to official club activities.\n\n"
+    "Examples:\n"
+    "User: I'm selling two Sam Houston tickets, text me at (719) 555-1234.\nAssistant: Yes\n"
+    "User: OU vs TX tickets available, DM if interested.\nAssistant: Yes\n"
+    "User: Please Venmo @utpickleball $30 for club dues by Friday.\nAssistant: No\n"
+    "User: Practice moved to 7pm, bring water.\nAssistant: No\n"
 )
 last_action = None
 
@@ -50,6 +57,30 @@ banned = load_file(BANNED_FILE).get("banned", [])
 
 def save_file(data, file: Path):
     file.write_text(json.dumps(data))
+
+def add_to_ignored(name: str) -> bool:
+    """Add a full name to ignored.json and in-memory cache. Returns True if added, False if already present or invalid."""
+    if not name or not name.strip():
+        return False
+    normalized = name.strip()
+    key = normalized.lower()
+
+    # Load current ignored list
+    ignored_data = load_file(IGNORE_FILE)
+    users = ignored_data.get("users", [])
+    lower_set = {u.lower() for u in users}
+
+    if key in lower_set:
+        return False
+
+    users.append(normalized)
+    ignored_data["users"] = users
+    save_file(ignored_data, IGNORE_FILE)
+
+    # Update in-memory lowercase list for quick checks
+    if key not in ignored:
+        ignored.append(key)
+    return True
 
 def get_user_conversation(user_id) -> list:
     """Get conversation history for a specific user"""
@@ -83,13 +114,30 @@ def normalize_text(text: str):
 def contains_banned(text: str):
     if not text or text.isspace() or text == "":
         return False
-    normalized = normalize_text(text)
-    response = prompt(normalized, SYSTEM_MESSAGE, training["messages"], True)
-    print(f"Model response: {response}")
-    if "yes" in response.lower():
-        print("Banned content detected by model.")
+    # Use original text (not normalized) so the model can leverage phone numbers, $ amounts, etc.
+    response = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), True)
+    print(f"Model response: {response}", flush=True)
+    if not response:
+        return False
+    answer = response.strip().lower()
+    if answer.startswith("yes"):
+        print("Banned content detected by model.", flush=True)
         return True
-    return False
+    if answer.startswith("no"):
+        return False
+    # Fallback: contain check if model added extra text
+    return "yes" in answer and "no" not in answer
+
+def _parse_yes_no_label(text: str):
+    """Return 'Yes' or 'No' if the model output starts with either, else None."""
+    if not text:
+        return None
+    first = text.strip().split()[0].lower()
+    if first == "yes":
+        return "Yes"
+    if first == "no":
+        return "No"
+    return None
 
 def get_membership_id(user_id):
     url = f"{BASE}/groups/{GROUP_ID}"
@@ -127,39 +175,42 @@ def accept_invites():
     }
     '''
     while True:
-        sleep(300)  # Wait 5 minutes
-        print("⏳ Checking for pending membership requests...")
-        url = f"{BASE}/groups/{GROUP_ID}/pending_memberships"
-        r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)  # Changed to GET
-        if r.status_code == 200:
-            pending_memberships = r.json().get("response", [])  # Get the response array
-            print(f"Found {len(pending_memberships)} pending memberships")
-            
-            for membership in pending_memberships:
-                membership_id = membership.get("id")
-                user_id = membership.get("user_id")
-                nickname = membership.get("nickname", "Unknown")
+        try:
+            sleep(300)  # Wait 5 minutes
+            print("⏳ Checking for pending membership requests...", flush=True)
+            url = f"{BASE}/groups/{GROUP_ID}/pending_memberships"
+            r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)  # Changed to GET
+            if r.status_code == 200:
+                pending_memberships = r.json().get("response", [])  # Get the response array
+                print(f"Found {len(pending_memberships)} pending memberships", flush=True)
                 
-                print(f"Processing membership request: {nickname} (ID: {user_id})")
-                
-                approval_url = f"{BASE}/groups/{GROUP_ID}/members/{membership_id}/approval"
-                
-                if user_id in banned:
-                    # Deny the membership
-                    r = requests.post(approval_url, json={"approval": False}, params={"token": ACCESS_TOKEN}, timeout=10)
-                    if r.status_code == 200:
-                        print(f"✋ Denied membership for banned user {nickname} ({user_id})")
+                for membership in pending_memberships:
+                    membership_id = membership.get("id")
+                    user_id = membership.get("user_id")
+                    nickname = membership.get("nickname", "Unknown")
+                    
+                    print(f"Processing membership request: {nickname} (ID: {user_id})", flush=True)
+                    
+                    approval_url = f"{BASE}/groups/{GROUP_ID}/members/{membership_id}/approval"
+                    
+                    if user_id in banned:
+                        # Deny the membership
+                        r = requests.post(approval_url, json={"approval": False}, params={"token": ACCESS_TOKEN}, timeout=10)
+                        if r.status_code == 200:
+                            print(f"✋ Denied membership for banned user {nickname} ({user_id})", flush=True)
+                        else:
+                            print(f"❌ Failed to deny membership for {nickname} ({user_id})", flush=True)
                     else:
-                        print(f"❌ Failed to deny membership for {nickname} ({user_id})")
-                else:
-                    # Accept the membership
-                    r = requests.post(approval_url, json={"approval": True}, params={"token": ACCESS_TOKEN}, timeout=10)
-                    if r.status_code == 200:
-                        print(f"✅ Accepted membership for {nickname} ({user_id})")
-                    else:
-                        print(f"❌ Failed to accept membership for {nickname} ({user_id})")
-        else:
-            print(f"Failed to get pending memberships: {r.status_code}")
+                        # Accept the membership
+                        r = requests.post(approval_url, json={"approval": True}, params={"token": ACCESS_TOKEN}, timeout=10)
+                        if r.status_code == 200:
+                            print(f"✅ Accepted membership for {nickname} ({user_id})", flush=True)
+                        else:
+                            print(f"❌ Failed to accept membership for {nickname} ({user_id})", flush=True)
+            else:
+                print(f"Failed to get pending memberships: {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"Error in accept_invites: {e}", flush=True)
 
 def get_subgroups():
     """GET /groups/:group_id/subgroups - Get all subgroups for a group"""
@@ -208,8 +259,8 @@ def check_model_availability() -> bool:
     models = ollama_model.list()
     available_models = [model['model'] for model in models['models']]
     is_available = MODEL in available_models
-    print(f"Model {MODEL} available: {is_available}")
-    print(f"Available models: {available_models}...")
+    print(f"Model {MODEL} available: {is_available}", flush=True)
+    print(f"Available models: {available_models}...", flush=True)
     return is_available
 
 def pull_model() -> None:
@@ -223,9 +274,9 @@ def pull_model() -> None:
         None
     """
 
-    print(f"Pulling model: {MODEL}")
+    print(f"Pulling model: {MODEL}", flush=True)
     ollama_model.pull(MODEL)
-    print(f"Successfully pulled {MODEL}")
+    print(f"Successfully pulled {MODEL}", flush=True)
 
 def prompt(message: str, system_message: str, data: list = None, train : bool = False) -> str:
     """
@@ -247,13 +298,13 @@ def prompt(message: str, system_message: str, data: list = None, train : bool = 
 
         if data:
             if train:
-                messages.append({"role":"user", "content":"Here is some training data. If a user response mimics when the assistant responds with 'Yes', then you should too."})
+                messages.append({"role":"user", "content":"Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam."})
 
             for entry in data:
                 messages.append(entry)
 
             if train:
-                messages.append({"role":"user", "content":"End of training data. Validate the next message."})
+                messages.append({"role":"user", "content":"End of examples. Classify the next message. Respond with exactly Yes or No."})
 
         # Add current message
         messages.append({"role": "user", "content": message})
@@ -265,16 +316,15 @@ def prompt(message: str, system_message: str, data: list = None, train : bool = 
             stream=False,
             think=False
         )
-        
         response_content = response['message']['content']
 
         if "</think>" in response_content:
-            response_content = response_content[response_content.find("</think>") + 8:].strip()             
-            
+            response_content = response_content[response_content.find("</think>") + 8:].strip()
+
         return response_content
         
     except Exception as e:
-        print(f"Error generating response: {e}")
+        print(f"Error generating response: {e}", flush=True)
         return None
 
 def ban(membership_id):
@@ -295,7 +345,7 @@ def send_dm(user_id, text):
         }
     }'''
     unique_guid = str(uuid.uuid4())
-    print(f"Sending DM to from bot: {text} with GUID {unique_guid}")
+    print(f"Sending DM to from bot: {text} with GUID {unique_guid}", flush=True)
     url = f"{BASE}/direct_messages"
     payload = {
         "direct_message": {
@@ -308,7 +358,7 @@ def send_dm(user_id, text):
     return r.status_code == 201
 
 def thanos(name, user_id, text):
-    print(f"🤖 Bot mention detected in message from {name}/{user_id}.")
+    print(f"🤖 Bot mention detected in message from {name}/{user_id}.", flush=True)
 
     user_conversation = add_to_conversation(user_id, "user", text)
     
@@ -357,14 +407,14 @@ def undo_last_action():
 
 def reckon(name, user_id, text, message_id):
     global last_action
-    print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'")
+    print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'", flush=True)
     strikes[user_id] = strikes.get(user_id, 0) + 1
     save_file(strikes, STRIKES_FILE)
 
     if strikes[user_id] <= WARN_STRIKES:
-        send_dm(user_id, f"@{name}, warning: spam detected, issueing reckoning {strikes[user_id]} of {WARN_STRIKES}.")
-        print(f"🗑️ Delete message from {name} success: {delete_message(message_id)}")
-        print(f"⚠️ Warning issued to {name} (strike {strikes[user_id]})")
+        send_dm(user_id, f"@{name}, warning: spam detected, issueing reckoning {strikes[user_id]} of {WARN_STRIKES}.\nSpam Message: '{text}'\nFuture violations may result in removal from the group.\nIf you believe this was a mistake, please let an admin know in the group chat.")
+        print(f"🗑️ Delete message from {name} success: {delete_message(message_id)}", flush=True)
+        print(f"⚠️ Warning issued to {name} (strike {strikes[user_id]})", flush=True)
         last_action = {"action": "strike", "user": name, "user_id": user_id}
     else:
         membership_id, _ = get_membership_id(user_id)
@@ -375,36 +425,36 @@ def reckon(name, user_id, text, message_id):
             send_dm(user_id, f"@{name}, you have been removed from the group due to repeated spam violations.\nDM an admin to be reconsidered for rejoining.")
             strikes.pop(user_id, None)
             save_file(strikes, STRIKES_FILE)
-            print(f"🗑️ Removed {name} from group.")
+            print(f"🗑️ Removed {name} from group.", flush=True)
             if doBans and ban(membership_id):
-                print(f"🚫 Banned {name} from rejoining.")
+                print(f"🚫 Banned {name} from rejoining.", flush=True)
                 post_bot_message(f"@{name} has been banned from rejoining. Erased from reality like my pfp.")
             else:
                 banned.append(user_id)
                 save_file({"banned": banned}, BANNED_FILE)
-                print(f"🚫 Added {name} to banned list.")
+                print(f"🚫 Added {name} to banned list.", flush=True)
         else:
             post_bot_message(f"Failed to remove @{name}, please snap manually.")
-            print(f"❌ Failed to remove {name}, membership ID not found.")
+            print(f"❌ Failed to remove {name}, membership ID not found.", flush=True)
 
 def subgroup_reckon_worker(name, user_id):
-    print(f"⏳ Waiting {WAIT} seconds before checking subgroups...")
+    print(f"⏳ Waiting {WAIT} seconds before checking subgroups...", flush=True)
     sleep(WAIT)  # Wait for bot to post spam message
-    print("🔍 Checking subgroups for spam messages...")
+    print("🔍 Checking subgroups for spam messages...", flush=True)
     subgroups = get_subgroups()
     for subgroup in subgroups:
         last_message_id = subgroup.get("messages").get("last_message_id")
         last_message = subgroup.get("messages").get("preview").get("text", "")
         name = subgroup.get("messages").get("preview").get("nickname", "Unknown")
 
-        print(f"📩 LAST Message from {name}: '{last_message}'")
+        print(f"📩 LAST Message from {name}: '{last_message}'", flush=True)
 
         if name == "Day of Reckoning":
-            print("🚫 Ignored bot message.")
+            print("🚫 Ignored bot message.", flush=True)
             return {"status": "ignored"}
 
         if any(keyword in last_message.lower() for keyword in ["@thanos", "joined", "left"]):
-            print("🚫 Ignored bot/system message.")
+            print("🚫 Ignored bot/system message.", flush=True)
             return {"status": "ignored"}
 
         if "Krish" in name:
@@ -443,13 +493,25 @@ async def callback(request: Request):
         thanos(name, user_id, text)
         return {"status": "bot_mentioned"}
     
-    if name.lower() == "Krish Prabhu" and "@undo" in text.lower():
-        undo_last_action()
-        return {"status": "undo"}
-
+    if name.lower() == "krish prabhu":
+        lower_text = text.lower()
+        if "@undo" in lower_text:
+            undo_last_action()
+            return {"status": "undo"}
+        # Handle @ignore "First Last"
+        m = re.search(r"@ignore\s+\"([^\"]+)\"", text)
+        if m:
+            to_ignore = m.group(1).strip()
+            added = add_to_ignored(to_ignore)
+            if added:
+                post_bot_message(f"Added '{to_ignore}' to the ignore list.", flush=True)
+                return {"status": "ignored_added", "user": to_ignore}
+            else:
+                post_bot_message(f"'{to_ignore}' is already in the ignore list or invalid.", flush=True)
+                return {"status": "ignored_exists", "user": to_ignore}
 
     if name.lower() in ignored:
-        print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
+        print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
         like_message(message_id)
         return {"status": "ignored"}
 
@@ -458,54 +520,24 @@ async def callback(request: Request):
 
     reckon(name, user_id, text, message_id)
 
-    Thread(target=subgroup_reckon_worker, args=(name, user_id)).start()
+    Thread(target=subgroup_reckon_worker, args=(name, user_id), daemon=True).start()
 
     return {"status": "processed"}
 
-@app.post("/train-bot")
-async def bot_train(request: Request):
+@app.post("/test-model")
+async def test_model(request: Request):
+    """Test the classifier with a message; returns only Yes or No. Does not modify training data."""
     data = await request.json()
     text = data.get("text", "")
-    output = {}
-    output["response"] = contains_banned(text)
-    output["training_data"] = training
-    output["input"] = text
-    training["messages"].append({"role": "user", "content": text})
-    training["messages"].append({"role": "assistant", "content": str(output["response"])})
-    save_file(training, TRAINING_FILE)
-    return output
+    if not text or text.isspace():
+        return {"error": "Text is required."}
 
-@app.delete("/remove-training-data/{num}")
-async def remove_training_data(num: int):
-    '''Removes the last n training data entries'''
-    if num <= 0 or num > len(training["messages"]):
-        return {"error": "Invalid number of entries to remove."}
-
-    training["messages"] = training["messages"][:-num]
-    save_file(training, TRAINING_FILE)
-    return {"status": "success", "training_data": training, "remaining": len(training["messages"])}
-
-@app.get("/training-data")
-async def get_training_data():
-    '''Get training data entries'''
-    training["messages"] = training["messages"]
-    return {"status": "success", "training_data": training}
-
-@app.get("/conversations/{user_id}")
-async def get_user_conversations(user_id: str):
-    '''Get conversation history for a specific user'''
-    user_conversation = get_user_conversation(user_id)
-    return {"status": "success", "user_id": user_id, "conversation": user_conversation}
-
-@app.delete("/conversations/{user_id}")
-async def clear_user_conversation(user_id: str):
-    '''Clear conversation history for a specific user'''
-    user_key = str(user_id)
-    if user_key in conversations:
-        conversations[user_key] = []
-        save_file(conversations, CONVERSATIONS_FILE)
-        return {"status": "success", "message": f"Conversation cleared for user {user_id}"}
-    return {"status": "error", "message": f"No conversation found for user {user_id}"}
+    resp = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), True)
+    label = _parse_yes_no_label(resp)
+    if label is None:
+        # Return raw so you can inspect if needed
+        return {"error": "Model did not respond with Yes/No", "raw": resp}
+    return {"label": label}
 
 # Entry point
 if __name__ == "__main__":
@@ -514,6 +546,9 @@ if __name__ == "__main__":
         STRIKES_FILE.write_text("{}")
     if(not CONVERSATIONS_FILE.exists()):
         CONVERSATIONS_FILE.write_text("{}")
+    # Ensure training file exists
+    if not TRAINING_FILE.exists():
+        TRAINING_FILE.write_text(json.dumps({"messages": []}))
     if not check_model_availability():
         pull_model()
     Thread(target=accept_invites).start()

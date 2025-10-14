@@ -6,7 +6,7 @@
         },
         {
             "role": "assistant",
-            "content": "False"
+            "content": "No"
         },
         {
             "role": "user",
@@ -14,7 +14,7 @@
         },
         {
             "role": "assistant",
-            "content": "False"
+            "content": "No"
         },
         {
             "role": "user",
@@ -22,7 +22,7 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
         },
         {
             "role": "user",
@@ -30,7 +30,7 @@
         },
         {
             "role": "assistant",
-            "content": "False"
+            "content": "No"
         },
         {
             "role": "user",
@@ -38,7 +38,7 @@
         },
         {
             "role": "assistant",
-            "content": "False"
+            "content": "No"
         },
         {
             "role": "user",
@@ -46,7 +46,7 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
         },
         {
             "role": "user",
@@ -54,7 +54,7 @@
         },
         {
             "role": "assistant",
-            "content": "False"
+            "content": "No"
         },
         {
             "role": "user",
@@ -62,7 +62,7 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
         },
         {
             "role": "user",
@@ -70,7 +70,7 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
         },
         {
             "role": "user",
@@ -78,7 +78,7 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
         },
         {
             "role": "user",
@@ -86,7 +86,15 @@
         },
         {
             "role": "assistant",
-            "content": "True"
+            "content": "Yes"
+        },
+        {
+            "role": "user",
+            "content": "Hey everyone! I’ve got my full season tickets, and I’m also open to selling them game by game. If you’re interested, just shoot me a DM!"
+        },
+        {
+            "role": "assistant",
+            "content": "Yes"
         }
     ]
 }

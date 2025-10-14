@@ -1,0 +1,49 @@
+
+@app.post("/train-bot")
+async def bot_train(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    output = {}
+    output["response"] = contains_banned(text)
+    output["training_data"] = training
+    output["input"] = text
+    # Ensure messages list exists
+    training.setdefault("messages", [])
+    # Store labels as Yes/No
+    label = "Yes" if output["response"] else "No"
+    training["messages"].append({"role": "user", "content": text})
+    training["messages"].append({"role": "assistant", "content": label})
+    save_file(training, TRAINING_FILE)
+    return output
+
+@app.delete("/remove-training-data/{num}")
+async def remove_training_data(num: int):
+    '''Removes the last n training data entries'''
+    if num <= 0 or num > len(training["messages"]):
+        return {"error": "Invalid number of entries to remove."}
+
+    training["messages"] = training["messages"][:-num]
+    save_file(training, TRAINING_FILE)
+    return {"status": "success", "training_data": training, "remaining": len(training["messages"])}
+
+@app.get("/training-data")
+async def get_training_data():
+    '''Get training data entries'''
+    training["messages"] = training["messages"]
+    return {"status": "success", "training_data": training}
+
+@app.get("/conversations/{user_id}")
+async def get_user_conversations(user_id: str):
+    '''Get conversation history for a specific user'''
+    user_conversation = get_user_conversation(user_id)
+    return {"status": "success", "user_id": user_id, "conversation": user_conversation}
+
+@app.delete("/conversations/{user_id}")
+async def clear_user_conversation(user_id: str):
+    '''Clear conversation history for a specific user'''
+    user_key = str(user_id)
+    if user_key in conversations:
+        conversations[user_key] = []
+        save_file(conversations, CONVERSATIONS_FILE)
+        return {"status": "success", "message": f"Conversation cleared for user {user_id}"}
+    return {"status": "error", "message": f"No conversation found for user {user_id}"}
