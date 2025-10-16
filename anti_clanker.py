@@ -7,7 +7,6 @@ import ollama
 from threading import Thread
 from time import sleep
 import uuid
-import re
 
 # Env variables
 ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
@@ -60,26 +59,19 @@ def save_file(data, file: Path):
 
 def add_to_ignored(name: str) -> bool:
     """Add a full name to ignored.json and in-memory cache. Returns True if added, False if already present or invalid."""
+    global ignored
+
     if not name or not name.strip():
         return False
-    normalized = name.strip()
-    key = normalized.lower()
+    
+    key = name.strip().lower()
 
-    # Load current ignored list
-    ignored_data = load_file(IGNORE_FILE)
-    users = ignored_data.get("users", [])
-    lower_set = {u.lower() for u in users}
-
-    if key in lower_set:
+    if key in ignored:
         return False
 
-    users.append(normalized)
-    ignored_data["users"] = users
-    save_file(ignored_data, IGNORE_FILE)
+    ignored.append(key)
+    save_file({"users": ignored}, IGNORE_FILE)
 
-    # Update in-memory lowercase list for quick checks
-    if key not in ignored:
-        ignored.append(key)
     return True
 
 def get_user_conversation(user_id) -> list:
@@ -498,17 +490,20 @@ async def callback(request: Request):
         if "@undo" in lower_text:
             undo_last_action()
             return {"status": "undo"}
-        # Handle @ignore "First Last"
-        m = re.search(r"@ignore\s+\"([^\"]+)\"", text)
-        if m:
-            to_ignore = m.group(1).strip()
-            added = add_to_ignored(to_ignore)
-            if added:
-                post_bot_message(f"Added '{to_ignore}' to the ignore list.", flush=True)
-                return {"status": "ignored_added", "user": to_ignore}
-            else:
-                post_bot_message(f"'{to_ignore}' is already in the ignore list or invalid.", flush=True)
-                return {"status": "ignored_exists", "user": to_ignore}
+        # Handle @ignore First Last
+        if "@ignore" in lower_text:
+            name = lower_text[lower_text.find(" ") + 1:lower_text.rfind(" ")]
+
+            if name:
+                added = add_to_ignored(name)
+                if added:
+                    post_bot_message(f"Added '{name}' to the ignore list.")
+                    print(f"🚫 Added '{name}' to ignore list.", flush=True)
+                    return {"status": "ignored_added", "user": name}
+                else:
+                    post_bot_message(f"'{name}' is already in the ignore list or invalid.")
+                    print(f"🚫 '{name}' is already in ignore list or invalid.", flush=True)
+                    return {"status": "ignored_exists", "user": name}
 
     if name.lower() in ignored:
         print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
