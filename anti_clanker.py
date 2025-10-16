@@ -107,7 +107,8 @@ def contains_banned(text: str):
     if not text or text.isspace() or text == "":
         return False
     # Use original text (not normalized) so the model can leverage phone numbers, $ amounts, etc.
-    response = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), True)
+    response = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
+
     print(f"Model response: {response}", flush=True)
     if not response:
         return False
@@ -121,10 +122,16 @@ def contains_banned(text: str):
     return "yes" in answer and "no" not in answer
 
 def _parse_yes_no_label(text: str):
-    """Return 'Yes' or 'No' if the model output starts with either, else None."""
+    """Return 'Yes' or 'No' if the model output starts or finishes with either, else None."""
     if not text:
         return None
-    first = text.strip().split()[0].lower()
+    textFixed = text.strip().lower().split()
+    first = textFixed[0]
+    last = textFixed[len(textFixed)-1]
+    if last == "yes":
+        return "Yes"
+    if last == "no":
+        return "No"
     if first == "yes":
         return "Yes"
     if first == "no":
@@ -270,7 +277,7 @@ def pull_model() -> None:
     ollama_model.pull(MODEL)
     print(f"Successfully pulled {MODEL}", flush=True)
 
-def prompt(message: str, system_message: str, data: list = None, train : bool = False) -> str:
+def prompt(message: str, system_message: str, data: list = None, train_start : str = None, train_end : str = None, think : bool = False) -> str:
     """
     Send a prompt to the DeepSeek R1 model.
     
@@ -289,14 +296,14 @@ def prompt(message: str, system_message: str, data: list = None, train : bool = 
         messages.append({"role": "system", "content": system_message})
 
         if data:
-            if train:
-                messages.append({"role":"user", "content":"Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam."})
+            if train_start:
+                messages.append({"role":"user", "content":train_start})
 
             for entry in data:
                 messages.append(entry)
 
-            if train:
-                messages.append({"role":"user", "content":"End of examples. Classify the next message. Respond with exactly Yes or No."})
+            if train_end:
+                messages.append({"role":"user", "content":train_end})
 
         # Add current message
         messages.append({"role": "user", "content": message})
@@ -306,11 +313,13 @@ def prompt(message: str, system_message: str, data: list = None, train : bool = 
             model=MODEL,
             messages=messages,
             stream=False,
-            think=False
+            think=think
         )
         response_content = response['message']['content']
 
-        if "</think>" in response_content:
+        if not think and "</think>" in response_content:
+            ''' Strip any think tags if present and think text 
+            </think> is the end of thinking so we take everything after that '''
             response_content = response_content[response_content.find("</think>") + 8:].strip()
 
         return response_content
@@ -527,7 +536,7 @@ async def test_model(request: Request):
     if not text or text.isspace():
         return {"error": "Text is required."}
 
-    resp = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), True)
+    resp = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
     label = _parse_yes_no_label(resp)
     if label is None:
         # Return raw so you can inspect if needed
