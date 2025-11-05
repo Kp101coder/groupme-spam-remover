@@ -128,6 +128,43 @@
             placeholder="Enter text to classify or ask"
           ></textarea>
         </div>
+        <div>
+          <label for="systemMessage">System Message (optional)</label>
+          <textarea
+            id="systemMessage"
+            placeholder="Override the default system message"
+            style="min-height: 120px"
+          ></textarea>
+        </div>
+        <div>
+          <label for="trainStart">Train Start (optional)</label>
+          <textarea
+            id="trainStart"
+            placeholder="Text to prepend before training examples"
+            style="min-height: 80px"
+          ></textarea>
+        </div>
+        <div>
+          <label for="conversationData">Conversation Data JSON (optional)</label>
+          <textarea
+            id="conversationData"
+            placeholder='Provide an array of chat turns, e.g. [{"role":"user","content":"Example"}]'
+            style="min-height: 160px"
+          ></textarea>
+        </div>
+        <div>
+          <label for="trainEnd">Train End (optional)</label>
+          <textarea
+            id="trainEnd"
+            placeholder="Text to append after training examples"
+            style="min-height: 80px"
+          ></textarea>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center">
+          <label style="margin: 0; display: flex; align-items: center; gap: 6px">
+            <input type="checkbox" id="thinkToggle" /> Think mode
+          </label>
+        </div>
         <div style="display: flex; gap: 8px">
           <button class="btn" id="runBtn">Run AI</button>
           <button class="btn secondary" id="clearBtn2">Clear Output</button>
@@ -209,16 +246,51 @@
           alert("Prompt text is required");
           return;
         }
+        const systemMessage = document
+          .getElementById("systemMessage")
+          .value.trim();
+        const trainStart = document
+          .getElementById("trainStart")
+          .value.trim();
+        const trainEnd = document
+          .getElementById("trainEnd")
+          .value.trim();
+        const think = document.getElementById("thinkToggle").checked;
+        const conversationDataRaw = document
+          .getElementById("conversationData")
+          .value.trim();
+
+        let conversationData;
+        if (conversationDataRaw) {
+          try {
+            const parsed = JSON.parse(conversationDataRaw);
+            if (!Array.isArray(parsed)) {
+              throw new Error("Conversation data must be an array");
+            }
+            conversationData = parsed;
+          } catch (err) {
+            alert(`Invalid conversation data JSON: ${err.message}`);
+            return;
+          }
+        }
+
         const project = getProject();
         const headers = {
           "Content-Type": "application/json",
           "X-API-Key": key,
         };
         if (project) headers["X-API-Project"] = project;
+        const payload = { text };
+        if (systemMessage) payload.system_message = systemMessage;
+        if (conversationData) payload.data = conversationData;
+        if (trainStart) payload.train_start = trainStart;
+        if (trainEnd) payload.train_end = trainEnd;
+        if (think) payload.think = true;
+
         const res = await fetch("/ai", {
           method: "POST",
           headers,
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -261,6 +333,24 @@
       document.getElementById("runSample").onclick = () => {
         document.getElementById("prompt").value =
           "Selling OU tickets, DM me at 555-1234";
+        document.getElementById("systemMessage").value =
+          "Classify the message as spam (Yes) or not spam (No).";
+        document.getElementById("conversationData").value = JSON.stringify(
+          [
+            {
+              role: "user",
+              content: "I'm selling two Sam Houston tickets, text me at (719) 555-1234.",
+            },
+            { role: "assistant", content: "Yes" },
+            { role: "user", content: "Practice moved to 7pm, bring water." },
+            { role: "assistant", content: "No" },
+          ],
+          null,
+          2
+        );
+        document.getElementById("trainStart").value = "Training examples:";
+        document.getElementById("trainEnd").value = "Classify the next message.";
+        document.getElementById("thinkToggle").checked = false;
         document.getElementById("runBtn").click();
       };
 

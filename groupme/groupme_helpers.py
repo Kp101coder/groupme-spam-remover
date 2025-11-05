@@ -4,7 +4,7 @@ from pathlib import Path
 from time import sleep
 # GroupMe config and API helpers
 BASE = "https://api.groupme.com/v3"
-ACCESS_TOKEN_FILE = Path("access_token.txt")
+ACCESS_TOKEN_FILE = Path("groupme/access_token.txt")
 ACCESS_TOKEN = ACCESS_TOKEN_FILE.read_text().strip()
 GROUP_ID = 96533528
 BOT_AUTH_ID = "b9d6e8789517ec14b9e0887086"

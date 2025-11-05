@@ -7,7 +7,6 @@ from fastapi import HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from threading import Thread
-import re
 import logging
 from sec.key_helpers import generate_secret
 import ai.ai_helpers as ai
@@ -18,6 +17,7 @@ from sec.security_helpers import (
     API_KEYS_FILE,
     API_KEY_HEADER_NAME,
     API_PROJECT_HEADER_NAME,
+    ADMIN_KEY_HEADER_NAME,
     require_api_key,
     require_admin_header,
 )
@@ -125,6 +125,15 @@ async def enforce_api_key_middleware(request: Request, call_next) -> Any:
     # Check header or query param
     api_key = request.headers.get(API_KEY_HEADER_NAME) or request.query_params.get("api_key")
     if not api_key:
+        admin_key = request.headers.get(ADMIN_KEY_HEADER_NAME) or request.query_params.get("admin_key")
+        if admin_key:
+            try:
+                require_admin_header(request)
+            except HTTPException as e:
+                return JSONResponse({"detail": e.detail}, status_code=e.status_code)
+            request.state.identity = {"name": ADMIN_KEY.get("name", "admin"), "role": "admin", "projects": ["*"]}
+            request.state.project = None
+            return await call_next(request)
         return JSONResponse({"detail": "Missing API Key"}, status_code=401)
 
     try:
@@ -280,10 +289,10 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
     project = getattr(request.state, "project", None)
     logger.info("/ai invoked by %s project=%s", caller, project or "*")
 
-    system_message = payload.get("system_message", SYSTEM_MESSAGE)
-    data_list = payload.get("data", gm.training.get("messages", []))
-    train_start = payload.get("train_start")
-    train_end = payload.get("train_end")
+    system_message = payload.get("system_message", None)
+    data_list = payload.get("data", None)
+    train_start = payload.get("train_start", None)
+    train_end = payload.get("train_end", None)
     think = payload.get("think", False)
 
     # Call prompt

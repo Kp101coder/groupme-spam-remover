@@ -57,10 +57,9 @@ def pull_model_name(name: str) -> None:
 
 def remove_model(name: str) -> None:
     """Remove an arbitrary model by name."""
-    ollama_model.remove(name)
+    ollama.delete(name)
 
-
-def prompt(message: str, system_message: str, data: List[dict] = None, train_start: Optional[str] = None, train_end: Optional[str] = None, think: bool = False) -> Optional[str]:
+def prompt(message: str, system_message: str = None, data: List[dict] = None, train_start: Optional[str] = None, train_end: Optional[str] = None, think: bool = False) -> Optional[str]:
     """Send a prompt to the model. Raises on client errors; caller must catch/log.
 
     This function is a direct copy of the server prompt logic but doesn't swallow
@@ -68,7 +67,8 @@ def prompt(message: str, system_message: str, data: List[dict] = None, train_sta
     """
     messages = []
 
-    messages.append({"role": "system", "content": system_message})
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
 
     if data:
         if train_start:

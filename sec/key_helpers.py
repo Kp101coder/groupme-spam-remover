@@ -125,5 +125,5 @@ def persist_named_key(name: str, secret: str, file: Path, metadata: Optional[Dic
 def persist_admin_key(name: str, secret: str, file: Path) -> None:
     """Persist admin key JSON with {name, hash}. This file is used only for admin verification."""
     h = hash_secret(secret)
-    data = {"name": name, "hash": h}
+    data = {"name": name, "temp_plaintext": secret, "hash": h}
     file.write_text(json.dumps(data, indent=2))
