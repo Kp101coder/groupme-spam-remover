@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GroupMe Spam Remover</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      body {
+        font-family: Segoe UI, Arial, sans-serif;
+        margin: 0;
+        background: #071022;
+        color: #e6eef8;
+      }
+      header {
+        padding: 32px 24px;
+        background: linear-gradient(135deg, #13264f, #0b162d);
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      main {
+        padding: 24px;
+        display: grid;
+        gap: 24px;
+      }
+      section {
+        background: rgba(13, 27, 55, 0.85);
+        padding: 20px;
+        border-radius: 12px;
+      }
+      a {
+        color: #93c5fd;
+      }
+      button {
+        background: #3b82f6;
+        border: none;
+        color: #fff;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      input {
+        width: 100%;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(7, 16, 34, 0.8);
+        color: inherit;
+        margin-bottom: 12px;
+      }
+      ul {
+        padding-left: 18px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
+        margin-left: 8px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>GroupMe Spam Remover</h1>
+      <p>
+        Central command surface for GroupMe, Discord, or any service using this
+        moderation brain.
+      </p>
+    </header>
+    <main>
+      <section>
+        <h2>Quick Launch</h2>
+        <form id="login" style="max-width: 320px">
+          <label for="key">API Key</label>
+          <input id="key" type="password" placeholder="Paste API key" />
+          <button type="submit">Continue</button>
+          <div id="err" style="color: #fca5a5; margin-top: 8px"></div>
+        </form>
+        <p class="status" id="loginStatus"></p>
+      </section>
+      <section>
+        <h2>Dashboards</h2>
+        <ul>
+          <li>
+            <a href="/ui">User Console</a>
+            <span class="pill">Requires API key</span>
+          </li>
+          <li>
+            <a href="/admin/ui">Admin Console</a>
+            <span class="pill">Requires admin key</span>
+          </li>
+          <li>
+            <a href="/security_instructions.html">HTTPS &amp; Security Guide</a>
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2>Getting Access</h2>
+        <ol>
+          <li>
+            Reach out to
+            <a href="https://github.com/kp101coder">@kp101coder</a> with your
+            use case.
+          </li>
+          <li>
+            Specify which project(s) the key should be scoped to (e.g.
+            <code>groupme</code>, <code>discord</code>).
+          </li>
+          <li>Store the generated secret securely; it is only shown once.</li>
+        </ol>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("login");
+      const errEl = document.getElementById("err");
+      const statusEl = document.getElementById("loginStatus");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const key = document.getElementById("key").value.trim();
+        errEl.textContent = "";
+        statusEl.textContent = "";
+        if (!key) {
+          errEl.textContent = "Key required";
+          return;
+        }
+        try {
+          const res = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            errEl.textContent = data.detail || "Login failed";
+            return;
+          }
+          localStorage.setItem("api_key", key);
+          localStorage.setItem("api_last_role", data.role || "user");
+          localStorage.setItem(
+            "api_projects",
+            JSON.stringify(data.projects || [])
+          );
+          statusEl.textContent = `Logged in as ${data.name} (${
+            data.role || "user"
+          })`;
+          window.location = data.role === "admin" ? "/admin_ui" : "/user_ui";
+        } catch (err) {
+          errEl.textContent = String(err);
+        }
+      });
+    </script>
+  </body>
+</html>

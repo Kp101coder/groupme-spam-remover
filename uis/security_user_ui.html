@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>User AI Console</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      body {
+        font-family: Segoe UI, Arial;
+        background: #071022;
+        color: #e6eef8;
+        margin: 0;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: #071428;
+      }
+      main {
+        display: flex;
+        gap: 16px;
+        padding: 16px;
+      }
+      .sidebar {
+        width: 260px;
+        background: #091833;
+        padding: 16px;
+        border-radius: 10px;
+      }
+      .content {
+        flex: 1;
+        padding: 16px;
+        border-radius: 10px;
+        background: #0b203f;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .btn {
+        background: #3b82f6;
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+      }
+      .btn.secondary {
+        background: transparent;
+        border: 1px solid #3b82f6;
+      }
+      .input,
+      textarea {
+        width: 100%;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(7, 20, 40, 0.6);
+        color: inherit;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 160px;
+      }
+      pre {
+        background: rgba(3, 10, 24, 0.9);
+        padding: 12px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      .status {
+        font-size: 14px;
+        color: #94a3b8;
+      }
+      .badge {
+        display: inline-block;
+        background: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        margin-left: 8px;
+      }
+      label {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h2 style="margin: 0">User AI Console</h2>
+        <div class="status" id="status">Not authenticated</div>
+      </div>
+      <div style="display: flex; gap: 8px">
+        <button id="loginBtn" class="btn">Login</button>
+        <button id="clearBtn" class="btn secondary">Clear Key</button>
+      </div>
+    </header>
+    <main>
+      <aside class="sidebar">
+        <h3>Session</h3>
+        <div>
+          <label for="projectInput">Project</label>
+          <input id="projectInput" class="input" placeholder="e.g. groupme" />
+          <small id="projectHelp" style="color: #94a3b8"></small>
+        </div>
+        <button id="saveProjectBtn" class="btn" style="width: 100%">
+          Save Project
+        </button>
+        <hr style="border-color: rgba(255, 255, 255, 0.08)" />
+        <h3>Quick Actions</h3>
+        <button class="btn" id="runSample" style="width: 100%">
+          Run Spam Sample
+        </button>
+        <pre id="lastOut" style="margin-top: 12px; min-height: 80px"></pre>
+      </aside>
+      <section class="content">
+        <div>
+          <label for="prompt">Prompt</label>
+          <textarea
+            id="prompt"
+            placeholder="Enter text to classify or ask"
+          ></textarea>
+        </div>
+        <div style="display: flex; gap: 8px">
+          <button class="btn" id="runBtn">Run AI</button>
+          <button class="btn secondary" id="clearBtn2">Clear Output</button>
+        </div>
+        <div>
+          <h3 style="margin-bottom: 8px">Output</h3>
+          <pre id="out" style="min-height: 160px"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const lastOutEl = document.getElementById("lastOut");
+      const outEl = document.getElementById("out");
+      const projectHelpEl = document.getElementById("projectHelp");
+
+      function getKey() {
+        return localStorage.getItem("api_key") || "";
+      }
+
+      function setKey(value) {
+        if (value) {
+          localStorage.setItem("api_key", value);
+        } else {
+          localStorage.removeItem("api_key");
+        }
+      }
+
+      function getProject() {
+        return localStorage.getItem("api_project") || "";
+      }
+
+      function setProject(value) {
+        if (value) {
+          localStorage.setItem("api_project", value);
+        } else {
+          localStorage.removeItem("api_project");
+        }
+        document.getElementById("projectInput").value = value;
+      }
+
+      async function refreshStatus() {
+        const key = getKey();
+        if (!key) {
+          statusEl.textContent = "Not authenticated";
+          projectHelpEl.textContent = "";
+          return;
+        }
+        try {
+          const res = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Login failed");
+          const allowedProjects = (data.projects || []).join(", ") || "*";
+          statusEl.innerHTML = `Hello ${data.name} <span class="badge">${
+            data.role || "user"
+          }</span>`;
+          projectHelpEl.textContent =
+            allowedProjects === "*"
+              ? "This key can access any project."
+              : `Allowed projects: ${allowedProjects}`;
+        } catch (err) {
+          statusEl.textContent = `Authentication failed: ${err.message}`;
+        }
+      }
+
+      async function callAi() {
+        const key = getKey();
+        if (!key) {
+          alert("Please login with an API key first.");
+          return;
+        }
+        const text = document.getElementById("prompt").value.trim();
+        if (!text) {
+          alert("Prompt text is required");
+          return;
+        }
+        const project = getProject();
+        const headers = {
+          "Content-Type": "application/json",
+          "X-API-Key": key,
+        };
+        if (project) headers["X-API-Project"] = project;
+        const res = await fetch("/ai", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || data.error || res.statusText);
+        }
+        return data;
+      }
+
+      document.getElementById("loginBtn").onclick = async () => {
+        const value = prompt("Enter your API key:", getKey()) || "";
+        setKey(value.trim());
+        await refreshStatus();
+      };
+
+      document.getElementById("clearBtn").onclick = () => {
+        setKey("");
+        refreshStatus();
+      };
+
+      document.getElementById("saveProjectBtn").onclick = () => {
+        const value = document.getElementById("projectInput").value.trim();
+        setProject(value);
+      };
+
+      document.getElementById("runBtn").onclick = async () => {
+        try {
+          const data = await callAi();
+          outEl.textContent = JSON.stringify(data, null, 2);
+          lastOutEl.textContent = JSON.stringify(data, null, 2);
+        } catch (err) {
+          outEl.textContent = String(err.message || err);
+        }
+      };
+
+      document.getElementById("clearBtn2").onclick = () => {
+        outEl.textContent = "";
+        lastOutEl.textContent = "";
+      };
+
+      document.getElementById("runSample").onclick = () => {
+        document.getElementById("prompt").value =
+          "Selling OU tickets, DM me at 555-1234";
+        document.getElementById("runBtn").click();
+      };
+
+      document.getElementById("projectInput").value = getProject();
+      refreshStatus();
+    </script>
+  </body>
+</html>

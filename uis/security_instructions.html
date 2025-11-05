@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>GroupMe Spam Remover — HTTPS & Security Setup</title>
+    <style>
+      body {
+        font-family: Segoe UI, Roboto, Arial, sans-serif;
+        margin: 28px;
+        color: #111;
+      }
+      h1 {
+        color: #0b5;
+        display: block;
+      }
+      pre {
+        background: #f6f8fa;
+        border: 1px solid #e1e4e8;
+        padding: 12px;
+        overflow: auto;
+      }
+      code {
+        font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+      }
+      section {
+        margin-bottom: 24px;
+      }
+      .badge {
+        display: inline-block;
+        background: #0366d6;
+        color: #fff;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      ul {
+        line-height: 1.5;
+      }
+      .note {
+        background: #fffbe6;
+        border-left: 4px solid #ffd33d;
+        padding: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>HTTPS & Security Setup</h1>
+    <p class="badge">GroupMe Spam Remover — Setup Guide</p>
+
+    <section>
+      <h2>Before you begin</h2>
+      <ul>
+        <li>
+          Have a domain or subdomain (example: <code>api.example.com</code>).
+        </li>
+        <li>
+          Open ports 80 (HTTP) and 443 (HTTPS) in your firewall and
+          router/hosting security groups.
+        </li>
+        <li>
+          Run the app bound to <code>127.0.0.1:7110</code> and put a reverse
+          proxy in front of it.
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Quick dev: ngrok</h2>
+      <p>
+        Fast way to get an HTTPS endpoint for testing (not recommended for
+        production).
+      </p>
+      <pre><code>ngrok http 7110</code></pre>
+      <p>
+        ngrok will print a public <code>https://...</code> URL to use for
+        webhooks or testing.
+      </p>
+    </section>
+
+    <section>
+      <h2>Recommended: Caddy (automatic Let's Encrypt)</h2>
+      <p>Caddy automatically provisions and renews TLS certificates.</p>
+      <pre><code>example.com {
+    reverse_proxy 127.0.0.1:7110
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}
+</code></pre>
+      <p>Run Caddy:</p>
+      <pre><code>caddy run --config "Caddyfile"</code></pre>
+    </section>
+
+    <section>
+      <h2>Common production: Nginx + Certbot (Let's Encrypt)</h2>
+      <ol>
+        <li>
+          Create DNS A record: <code>api.example.com -> your server IP</code>
+        </li>
+        <li>Install nginx and certbot (example on Ubuntu):</li>
+      </ol>
+      <pre><code>sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+</code></pre>
+      <p>Example nginx site (replace <code>api.example.com</code>):</p>
+      <pre><code>server {
+    listen 80;
+    server_name api.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:7110;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+</code></pre>
+      <p>Obtain cert:</p>
+      <pre><code>sudo certbot --nginx -d api.example.com</code></pre>
+    </section>
+
+    <section>
+      <h2>Windows native: IIS + win-acme</h2>
+      <p>
+        Use IIS + ARR as reverse proxy, and win-acme to get Let's Encrypt certs
+        into the Windows certificate store and bind them to the IIS site.
+      </p>
+    </section>
+
+    <section>
+      <h2>Security hardening checklist</h2>
+      <ul>
+        <li>Redirect HTTP -> HTTPS.</li>
+        <li>Enable HSTS after verifying HTTPS works across your domain.</li>
+        <li>Disable weak TLS versions and ciphers (use TLS 1.2+).</li>
+        <li>
+          Run the app on <code>127.0.0.1</code> and block direct access to port
+          7110 from the internet.
+        </li>
+        <li>
+          Store secrets (access_token.txt, admin_key.txt, api_keys.json) with
+          strict filesystem permissions and preferably in a secrets manager in
+          production.
+        </li>
+        <li>Log failed auth attempts and monitor for abuse.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <pre><code>curl -vk https://api.example.com/
+openssl s_client -connect api.example.com:443 -servername api.example.com
+</code></pre>
+      <p>
+        Use SSL Labs (<a href="https://www.ssllabs.com/ssltest/">ssltest</a>)
+        for deep analysis.
+      </p>
+    </section>
+
+    <footer>
+      <p>Generated instructions for the GroupMe Spam Remover project.</p>
+    </footer>
+  </body>
+</html>

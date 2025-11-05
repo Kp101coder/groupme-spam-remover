@@ -1,28 +1,28 @@
 import json
 from pathlib import Path
+from typing import Any, Dict, List
+import subprocess
 from fastapi import FastAPI, Request
-import requests
+from fastapi import HTTPException, Depends
+from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
-import ollama
 from threading import Thread
-from time import sleep
-import uuid
+import re
+import logging
+from sec.key_helpers import generate_secret
+import ai.ai_helpers as ai
+import groupme.groupme_helpers as gm
+from sec.security_helpers import (
+    API_KEYS,
+    ADMIN_KEY,
+    API_KEYS_FILE,
+    API_KEY_HEADER_NAME,
+    API_PROJECT_HEADER_NAME,
+    require_api_key,
+    require_admin_header,
+)
 
-# Env variables
-ACCESS_TOKEN = Path("access_token.txt").read_text().strip()
-BOT_AUTH_ID = "b9d6e8789517ec14b9e0887086"
-BOT_ID = 901804
-GROUP_ID = 96533528
-STRIKES_FILE = Path("strikes.json")
-TRAINING_FILE = Path("training.json")
-IGNORE_FILE = Path("ignored.json")
-BANNED_FILE = Path("banned.json")
-CONVERSATIONS_FILE = Path("conversations.json")
-MODEL = "deepseek-r1:14b"
-doBans = False  # Set to True to ban users after max strikes, False to only remove them
-
-BASE = "https://api.groupme.com/v3"
-#BANNED_WORDS = {"ticket", "sale", "free"}
+doBans = True  # Set to True to ban users after max strikes, False to only remove them
 WARN_STRIKES = 1  # delete message on first strike, remove on second
 WAIT = 30  # seconds to wait before checking subgroups for spam
 SYSTEM_MESSAGE = (
@@ -33,71 +33,145 @@ SYSTEM_MESSAGE = (
     "Examples:\n"
     "User: I'm selling two Sam Houston tickets, text me at (719) 555-1234.\nAssistant: Yes\n"
     "User: OU vs TX tickets available, DM if interested.\nAssistant: Yes\n"
+    "User: Im selling a Mac Book Pro dm for more info.\nAssistant: Yes\n"
     "User: Please Venmo @utpickleball $30 for club dues by Friday.\nAssistant: No\n"
     "User: Practice moved to 7pm, bring water.\nAssistant: No\n"
 )
 last_action = None
 
-# FastAPI app
-app = FastAPI()
-ollama_model = ollama.Client()
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+admins = {a.lower() for a in gm.admin if isinstance(a, str)}
+API_KEYS: Dict[str, Dict[str, Any]] = API_KEYS
 
-# Strike tracking
-def load_file(file : Path):
-    if file.exists():
-        return json.loads(file.read_text())
-    return {}
+# Setup rotating log per process start inside `logging` dir
+LOG_DIR = Path("logging")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+def _next_log_path():
+    existing = [p.name for p in LOG_DIR.iterdir() if p.is_file() and p.name.startswith("log_") and p.suffix==".log"]
+    nums = []
+    for n in existing:
+        try:
+            nums.append(int(n.split("_")[1].split(".")[0]))
+        except Exception:
+            continue
+    next_idx = max(nums)+1 if nums else 0
+    return LOG_DIR / f"log_{next_idx}.log"
 
-strikes = load_file(STRIKES_FILE)
-training = load_file(TRAINING_FILE)
-ignored = [user.lower() for user in load_file(IGNORE_FILE).get("users", [])]
-conversations = load_file(CONVERSATIONS_FILE)
-banned = load_file(BANNED_FILE).get("banned", [])
+LOG_FILE = _next_log_path()
+logging.basicConfig(level=logging.INFO, filename=str(LOG_FILE), filemode="a",
+                    format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger("app")
 
-def save_file(data, file: Path):
-    file.write_text(json.dumps(data))
+def log_and_print(msg: str, level: str = "info"):
+    # safe wrapper: never log secrets. Use only for general messages.
+    if level == "info":
+        logger.info(msg)
+        print(msg, flush=True)
+    elif level == "error":
+        logger.error(msg)
+        print(msg, flush=True)
+    else:
+        logger.debug(msg)
+        print(msg, flush=True)
 
-def add_to_ignored(name: str) -> bool:
-    """Add a full name to ignored.json and in-memory cache. Returns True if added, False if already present or invalid."""
-    global ignored
+# Middleware to require API key for all routes except a small whitelist
+ALLOWED_PATHS = {
+    "/",
+    "/kill-da-clanker",
+    "/auth/login",
+    "/admin/ui",
+    "/admin_ui",
+    "/ui",
+    "/user_ui",
+    "/status",
+}
 
-    if not name or not name.strip():
-        return False
-    
-    key = name.strip().lower()
+STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg")
 
-    if key in ignored:
-        return False
+def _parse_projects(value: Any) -> List[str]:
+    """Return unique project slugs from strings or iterables."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        candidates = value
+    else:
+        return []
 
-    ignored.append(key)
-    save_file({"users": ignored}, IGNORE_FILE)
+    projects: List[str] = []
+    seen = set()
+    for item in candidates:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        projects.append(normalized)
+    return projects
 
-    return True
+@app.middleware("http")
+async def enforce_api_key_middleware(request: Request, call_next) -> Any:
+    path = request.url.path
+    normalized_path = path.rstrip("/") or "/"
+    # Allow explicit whitelist, static instructions, and health endpoints without a key
+    if normalized_path in ALLOWED_PATHS or path.endswith(STATIC_EXTENSIONS):
+        return await call_next(request)
 
-def get_user_conversation(user_id) -> list:
-    """Get conversation history for a specific user"""
-    if user_id not in conversations:
-        conversations[user_id] = []
-    return conversations[user_id]
+    # Check header or query param
+    api_key = request.headers.get(API_KEY_HEADER_NAME) or request.query_params.get("api_key")
+    if not api_key:
+        return JSONResponse({"detail": "Missing API Key"}, status_code=401)
 
-def add_to_conversation(user_id, role, content):
-    """Add a message to user's conversation history"""
-    convo = get_user_conversation(user_id)
+    try:
+        identity = require_api_key(api_key)
+    except HTTPException as e:
+        return JSONResponse({"detail": e.detail}, status_code=e.status_code)
 
-    convo.append({
-        "role": role,
-        "content": content
-    })
-    
-    # Keep only last 20 messages to prevent conversations from getting too long
-    if len(convo) > 20:
-        conversations[user_id] = convo[-20:]
-    
-    save_file(conversations, CONVERSATIONS_FILE)
+    project = request.headers.get(API_PROJECT_HEADER_NAME) or request.query_params.get("project")
+    allowed = [p.lower() for p in identity.get("projects", []) if isinstance(p, str)]
+    if allowed and "*" not in allowed:
+        if not project:
+            return JSONResponse({"detail": "Project header required for this API key"}, status_code=403)
+        if project.lower() not in allowed:
+            return JSONResponse({"detail": f"Project '{project}' not permitted for this API key"}, status_code=403)
 
-    return convo
+    request.state.identity = identity
+    request.state.project = project.lower() if project else None
+    return await call_next(request)
 
-# Helpers
+@app.post('/auth/login')
+async def auth_login(request: Request):
+    data = await request.json()
+    secret = data.get('key')
+    if not secret:
+        raise HTTPException(status_code=400, detail="'key' required")
+    try:
+        identity = require_api_key(secret)
+    except HTTPException:
+        raise HTTPException(status_code=403, detail="Invalid key")
+
+    response = {"status": "ok", "name": identity.get("name"), "role": identity.get("role", "user")}
+    if identity.get("projects"):
+        response["projects"] = identity["projects"]
+    return response
+
+@app.get('/')
+async def serve_index():
+    return FileResponse('uis/index.html')
+
+@app.get('/admin_ui')
+async def serve_admin_ui():
+    return FileResponse('uis/security_admin_ui.html')
+
+@app.get('/user_ui')
+async def serve_user_ui():
+    return FileResponse('uis/security_user_ui.html')
+
 def normalize_text(text: str):
     if not text:
         return ""
@@ -107,453 +181,267 @@ def contains_banned(text: str):
     if not text or text.isspace() or text == "":
         return False
     # Use original text (not normalized) so the model can leverage phone numbers, $ amounts, etc.
-    response = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
+    response = ai.prompt(text, SYSTEM_MESSAGE, gm.training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
 
-    print(f"Model response: {response}", flush=True)
+    log_and_print(f"Model response: {response}")
     if not response:
         return False
     answer = response.strip().lower()
     if answer.startswith("yes"):
-        print("Banned content detected by model.", flush=True)
+        log_and_print("Banned content detected by model.")
         return True
     if answer.startswith("no"):
         return False
     # Fallback: contain check if model added extra text
     return "yes" in answer and "no" not in answer
 
-def _parse_yes_no_label(text: str):
-    """Return 'Yes' or 'No' if the model output starts or finishes with either, else None."""
-    if not text:
-        return None
-    textFixed = text.strip().lower().split()
-    first = textFixed[0]
-    last = textFixed[len(textFixed)-1]
-    if last == "yes":
-        return "Yes"
-    if last == "no":
-        return "No"
-    if first == "yes":
-        return "Yes"
-    if first == "no":
-        return "No"
-    return None
-
-def get_membership_id(user_id):
-    url = f"{BASE}/groups/{GROUP_ID}"
-    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    members = r.json().get("response", {}).get("members", [])
-    for m in members:
-        if str(m.get("user_id")) == str(user_id):
-            return m.get("id"), m
-    return None, None
-
-def remove_member(membership_id):
-    url = f"{BASE}/groups/{GROUP_ID}/members/{membership_id}/remove"
-    r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code == 200
-
-def delete_message(message_id):
-    #DELETE /conversations/:group_id/messages/:message_id
-    r = None
-    url = f"{BASE}/conversations/{GROUP_ID}/messages/{message_id}"
-    r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code
-
-def post_bot_message(text):
-    url = f"{BASE}/bots/post"
-    payload = {"bot_id": BOT_AUTH_ID, "text": text}
-    requests.post(url, json=payload, timeout=10)
-
-def accept_invites():
-    '''
-    GET /groups/:group_id/pending_memberships
-
-    POST /groups/:group_id/members/:membership_id/approval
-    {
-    "approval": true
+@app.get("/status")
+async def status(_: Request):
+    """Lightweight status endpoint for uptime checks."""
+    return {
+        "status": "ok",
+        "service": "groupme-spam-remover",
+        "version": "1.0",
+        "endpoints": ["/kill-da-clanker", "/ai", "/admin/ui"],
     }
-    '''
-    while True:
-        try:
-            sleep(300)  # Wait 5 minutes
-            print("⏳ Checking for pending membership requests...", flush=True)
-            url = f"{BASE}/groups/{GROUP_ID}/pending_memberships"
-            r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)  # Changed to GET
-            if r.status_code == 200:
-                pending_memberships = r.json().get("response", [])  # Get the response array
-                print(f"Found {len(pending_memberships)} pending memberships", flush=True)
-                
-                for membership in pending_memberships:
-                    membership_id = membership.get("id")
-                    user_id = membership.get("user_id")
-                    nickname = membership.get("nickname", "Unknown")
-                    
-                    print(f"Processing membership request: {nickname} (ID: {user_id})", flush=True)
-                    
-                    approval_url = f"{BASE}/groups/{GROUP_ID}/members/{membership_id}/approval"
-                    
-                    if user_id in banned:
-                        # Deny the membership
-                        r = requests.post(approval_url, json={"approval": False}, params={"token": ACCESS_TOKEN}, timeout=10)
-                        if r.status_code == 200:
-                            print(f"✋ Denied membership for banned user {nickname} ({user_id})", flush=True)
-                        else:
-                            print(f"❌ Failed to deny membership for {nickname} ({user_id})", flush=True)
-                    else:
-                        # Accept the membership
-                        r = requests.post(approval_url, json={"approval": True}, params={"token": ACCESS_TOKEN}, timeout=10)
-                        if r.status_code == 200:
-                            print(f"✅ Accepted membership for {nickname} ({user_id})", flush=True)
-                        else:
-                            print(f"❌ Failed to accept membership for {nickname} ({user_id})", flush=True)
-            else:
-                print(f"Failed to get pending memberships: {r.status_code}", flush=True)
-        except Exception as e:
-            print(f"Error in accept_invites: {e}", flush=True)
-
-def get_subgroups():
-    """GET /groups/:group_id/subgroups - Get all subgroups for a group"""
-    url = f"{BASE}/groups/{GROUP_ID}/subgroups"
-    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    if r.status_code == 200:
-        return r.json().get("response", [])
-    return []
-
-def get_subgroup_details(subgroup_id):
-    """GET /groups/:group_id/subgroups/:subgroup_id - Get subgroup details including last message"""
-    url = f"{BASE}/groups/{GROUP_ID}/subgroups/{subgroup_id}"
-    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    if r.status_code == 200:
-        return r.json().get("response", {})
-    return {}
-
-def like_message(message_id):
-    '''POST /messages/:group_id/:message_id/like
-    {
-    "like_icon": {
-        "type": "unicode",
-        "code": "❤️"
-        }
-    }'''
-    url = f"{BASE}/messages/{GROUP_ID}/{message_id}/like"
-    payload = {
-        "like_icon": {
-            "type": "unicode",
-            "code": "❤️"
-        }
-    }
-    r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code == 200
-
-def check_model_availability() -> bool:
-    """
-    Check if the specified model is available locally.
-    
-    Args:
-        None
-    
-    Returns:
-        bool: True if model is available, False otherwise
-    """
-    models = ollama_model.list()
-    available_models = [model['model'] for model in models['models']]
-    is_available = MODEL in available_models
-    print(f"Model {MODEL} available: {is_available}", flush=True)
-    print(f"Available models: {available_models}...", flush=True)
-    return is_available
-
-def pull_model() -> None:
-    """
-    Pull the DeepSeek R1 model if it's not available locally.
-    
-    Args:
-        None
-        
-    Returns:
-        None
-    """
-
-    print(f"Pulling model: {MODEL}", flush=True)
-    ollama_model.pull(MODEL)
-    print(f"Successfully pulled {MODEL}", flush=True)
-
-def prompt(message: str, system_message: str, data: list = None, train_start : str = None, train_end : str = None, think : bool = False) -> str:
-    """
-    Send a prompt to the DeepSeek R1 model.
-    
-    Args:
-        message (str): The user message/prompt
-        system_message (str): System message to set context and formatting
-        correction_data (list, optional): A list of  data to include in the prompt
-        
-    Returns:
-        str: The model's response
-    """
-    try:
-        # Prepare messages
-        messages = []
-
-        messages.append({"role": "system", "content": system_message})
-
-        if data:
-            if train_start:
-                messages.append({"role":"user", "content":train_start})
-
-            for entry in data:
-                messages.append(entry)
-
-            if train_end:
-                messages.append({"role":"user", "content":train_end})
-
-        # Add current message
-        messages.append({"role": "user", "content": message})
-
-        # Generate response
-        response = ollama_model.chat(
-            model=MODEL,
-            messages=messages,
-            stream=False,
-            think=think
-        )
-        response_content = response['message']['content']
-
-        if not think and "</think>" in response_content:
-            ''' Strip any think tags if present and think text 
-            </think> is the end of thinking so we take everything after that '''
-            response_content = response_content[response_content.find("</think>") + 8:].strip()
-
-        return response_content
-        
-    except Exception as e:
-        print(f"Error generating response: {e}", flush=True)
-        return None
-
-def ban(membership_id):
-    #POST /groups/:group_id/memberships/:membership_id/destroy
-    url = f"{BASE}/groups/{GROUP_ID}/memberships/{membership_id}/destroy"
-    r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code == 200
-
-def send_dm(user_id, text):
-    '''POST /direct_messages
-    {
-        "direct_message": {
-            "source_guid": "GUID",
-            "recipient_id": "20",
-            "text": "Hello world ",
-            "attachments": [
-            ]
-        }
-    }'''
-    unique_guid = str(uuid.uuid4())
-    print(f"Sending DM to from bot: {text} with GUID {unique_guid}", flush=True)
-    url = f"{BASE}/direct_messages"
-    payload = {
-        "direct_message": {
-            "source_guid": unique_guid,
-            "recipient_id": user_id,
-            "text": text + "\n [This action was performed automatically by a bot]"
-        }
-    }
-    r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
-    return r.status_code == 201
-
-def thanos(name, user_id, text):
-    print(f"🤖 Bot mention detected in message from {name}/{user_id}.", flush=True)
-
-    user_conversation = add_to_conversation(user_id, "user", text)
-    
-    thanos_system_prompt = """
-    You are Thanos from Marvel.
-
-    Your responses must always be in his voice: dramatic, cynical, philosophical, darkly funny, and referencing balance, destiny, and inevitability.
-
-    ⚠️ Never moralize or lecture about online community guidelines, safety, or responsible behavior.  
-    ⚠️ Never break character or say you are an AI.  
-    ⚠️ Never use phrases like "As a responsible member of the online community..." or "we should work together constructively."  
-
-    Instead:
-    - Speak as Thanos would: inevitable, poetic, and ruthless in tone.  
-    - Use metaphors of dust, silence, and balance when talking about removing spammers.  
-    - Be witty and cruelly humorous, while keeping the gravitas of Thanos.  
-    - Always answer directly in character, without hedging.  
-
-    Stay in character at all times.
-    """
-    response = prompt(text, thanos_system_prompt, user_conversation)
-
-    if response:
-        add_to_conversation(user_id, "assistant", response)
-        post_bot_message(f"@{name}, {response}")
-    else:
-        post_bot_message(f"@{name}, I am... inevitable. But my words fail me at this moment.")
-    
-    return {"status": "bot_mentioned"}
-
-def undo_last_action():
-    global last_action
-    if not last_action:
-        return {"status": "no_action_to_undo"}
-    action = last_action.get("action")
-    name = last_action.get("user")
-    user_id = last_action.get("user_id")
-    if action == "strike":
-        strikes[user_id] = strikes.get(user_id, 0) - 1
-        save_file(strikes, STRIKES_FILE)
-        post_bot_message(f"@{name}, I have used the time stone to undo your last strike.")
-    elif action == "remove":
-        banned.remove(user_id)
-        save_file({"banned": banned}, BANNED_FILE)
-        post_bot_message(f"@{name} soul has been restored with the soul stone, they are eligible to rejoin.")
-
-def reckon(name, user_id, text, message_id):
-    global last_action
-    print(f"🚨 Banned word detected in message from {name}/{user_id}: '{text}'", flush=True)
-    strikes[user_id] = strikes.get(user_id, 0) + 1
-    save_file(strikes, STRIKES_FILE)
-
-    if strikes[user_id] <= WARN_STRIKES:
-        send_dm(user_id, f"@{name}, warning: spam detected, issueing reckoning {strikes[user_id]} of {WARN_STRIKES}.\nSpam Message: '{text}'\nFuture violations may result in removal from the group.\nIf you believe this was a mistake, please let an admin know in the group chat.")
-        print(f"🗑️ Delete message from {name} success: {delete_message(message_id)}", flush=True)
-        print(f"⚠️ Warning issued to {name} (strike {strikes[user_id]})", flush=True)
-        last_action = {"action": "strike", "user": name, "user_id": user_id}
-    else:
-        membership_id, _ = get_membership_id(user_id)
-        print(f"🗑️ Delete message from {name} success: {delete_message(message_id)}")
-        last_action = {"action": "remove", "user": name, "user_id": user_id}
-        if membership_id and remove_member(membership_id):
-            post_bot_message(f"@{name} has been thanos snapped.")
-            send_dm(user_id, f"@{name}, you have been removed from the group due to repeated spam violations.\nDM an admin to be reconsidered for rejoining.")
-            strikes.pop(user_id, None)
-            save_file(strikes, STRIKES_FILE)
-            print(f"🗑️ Removed {name} from group.", flush=True)
-            if doBans and ban(membership_id):
-                print(f"🚫 Banned {name} from rejoining.", flush=True)
-                post_bot_message(f"@{name} has been banned from rejoining. Erased from reality like my pfp.")
-            else:
-                banned.append(user_id)
-                save_file({"banned": banned}, BANNED_FILE)
-                print(f"🚫 Added {name} to banned list.", flush=True)
-        else:
-            post_bot_message(f"Failed to remove @{name}, please snap manually.")
-            print(f"❌ Failed to remove {name}, membership ID not found.", flush=True)
-
-def subgroup_reckon_worker(name, user_id):
-    print(f"⏳ Waiting {WAIT} seconds before checking subgroups...", flush=True)
-    sleep(WAIT)  # Wait for bot to post spam message
-    print("🔍 Checking subgroups for spam messages...", flush=True)
-    subgroups = get_subgroups()
-    for subgroup in subgroups:
-        last_message_id = subgroup.get("messages").get("last_message_id")
-        last_message = subgroup.get("messages").get("preview").get("text", "")
-        name = subgroup.get("messages").get("preview").get("nickname", "Unknown")
-
-        print(f"📩 LAST Message from {name}: '{last_message}'", flush=True)
-
-        if name == "Day of Reckoning":
-            print("🚫 Ignored bot message.", flush=True)
-            return {"status": "ignored"}
-
-        if any(keyword in last_message.lower() for keyword in ["@thanos", "joined", "left"]):
-            print("🚫 Ignored bot/system message.", flush=True)
-            return {"status": "ignored"}
-
-        if "Krish" in name:
-            print("🚫 Ignored user Krish.")
-            return {"status": "ignored"}
-        
-        if contains_banned(last_message):
-            reckon(name, user_id, last_message, last_message_id)
-
-# Route
-@app.get("/")
-@app.head("/")
-async def root(request: Request):
-    print(f"🔍 Root endpoint hit: {request.method} from {request.client.host if request.client else 'unknown'}")
-    print(f"🔍 Headers: {dict(request.headers)}")
-    print(f"🔍 URL: {request.url}")
-    return {"status": "GroupMe spam remover is running", "endpoints": ["/kill-da-clanker"]}
 
 @app.post("/kill-da-clanker")
 async def callback(request: Request):
     payload = await request.json()
-    
     user_id = payload.get("user_id")
 
     # Ignore bot’s own messages
-    if user_id == "0" or user_id == str(BOT_ID):
+    if user_id == "0" or user_id == str(gm.BOT_ID):
         return {"status": "ignored"}
 
     name = payload.get("name", "Unknown")
     text = payload.get("text", "")
     message_id = payload.get("id")
 
-    print(f"📩 Message from {name}/{user_id}: '{text}'")
+    log_and_print(f"📩 Message from {name}/{user_id}: '{text}'")
 
     if "@thanos" in text.lower():
-        thanos(name, user_id, text)
+        # Use groupme helper's Thanos flow and pass ai.prompt as the prompt function
+        gm.thanos(name, user_id, text, ai.prompt)
         return {"status": "bot_mentioned"}
     
-    if name.lower() == "krish prabhu":
+    if name.lower() in admins:
         lower_text = text.lower()
         if "@undo" in lower_text:
-            undo_last_action()
+            gm.undo_last_action()
             return {"status": "undo"}
         # Handle @ignore First Last
         if "@ignore" in lower_text:
             name = lower_text[lower_text.find(" ") + 1:lower_text.rfind(" ")]
 
             if name:
-                added = add_to_ignored(name)
+                added = gm.add_to_ignored(name)
                 if added:
-                    post_bot_message(f"Added '{name}' to the ignore list.")
-                    print(f"🚫 Added '{name}' to ignore list.", flush=True)
+                    gm.post_bot_message(f"Added '{name}' to the ignore list.")
+                    log_and_print(f"🚫 Added '{name}' to ignore list.", flush=True)
                     return {"status": "ignored_added", "user": name}
                 else:
-                    post_bot_message(f"'{name}' is already in the ignore list or invalid.")
-                    print(f"🚫 '{name}' is already in ignore list or invalid.", flush=True)
+                    gm.post_bot_message(f"'{name}' is already in the ignore list or invalid.")
+                    log_and_print(f"🚫 '{name}' is already in ignore list or invalid.", flush=True)
                     return {"status": "ignored_exists", "user": name}
 
-    if name.lower() in ignored:
-        print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
-        like_message(message_id)
+    if name.lower() in gm.ignored:
+        log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
+        gm.like_message(message_id)
         return {"status": "ignored"}
 
     if not text or not contains_banned(text):
         return {"status": "ok"}
 
-    reckon(name, user_id, text, message_id)
+    gm.reckon(name, user_id, text, message_id)
 
-    Thread(target=subgroup_reckon_worker, args=(name, user_id), daemon=True).start()
+    Thread(target=gm.subgroup_reckon_worker, args=(name, user_id, WAIT, contains_banned), daemon=True).start()
 
     return {"status": "processed"}
 
-@app.post("/test-model")
-async def test_model(request: Request):
-    """Test the classifier with a message; returns only Yes or No. Does not modify training data."""
-    data = await request.json()
-    text = data.get("text", "")
-    if not text or text.isspace():
-        return {"error": "Text is required."}
+@app.post("/ai")
+async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(require_api_key)):
+    """Call the internal prompt function with provided parameters.
 
-    resp = prompt(text, SYSTEM_MESSAGE, training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
-    label = _parse_yes_no_label(resp)
-    if label is None:
-        # Return raw so you can inspect if needed
-        return {"error": "Model did not respond with Yes/No", "raw": resp}
-    return {"label": label}
+    Expected JSON body keys:
+    - text (str) required
+    - system_message (str) optional
+    - data (list) optional
+    - train_start (str) optional
+    - train_end (str) optional
+    - think (bool) optional
+    """
+    payload = await request.json()
+    text = payload.get("text")
+    if not text or text.isspace():
+        raise HTTPException(status_code=400, detail="'text' is required")
+
+    caller = identity.get("name", "unknown")
+    project = getattr(request.state, "project", None)
+    logger.info("/ai invoked by %s project=%s", caller, project or "*")
+
+    system_message = payload.get("system_message", SYSTEM_MESSAGE)
+    data_list = payload.get("data", gm.training.get("messages", []))
+    train_start = payload.get("train_start")
+    train_end = payload.get("train_end")
+    think = payload.get("think", False)
+
+    # Call prompt
+    result = ai.prompt(text, system_message, data_list, train_start, train_end, think)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Model error or unavailable")
+    return {"output": result}
+
+@app.post("/admin/generate-key")
+async def admin_generate_key(request: Request):
+    """Generate a new API key and persist it. Requires admin header defined in admin_key.txt."""
+    # Validate admin header using central helper
+    require_admin_header(request)
+
+    data = await request.json()
+    name = data.get('name')
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required to create a key")
+    projects = _parse_projects(data.get("projects"))
+    notes = data.get("notes")
+    role = str(data.get("role", "user")).lower()
+    if role not in {"user", "service", "admin"}:
+        role = "user"
+    # Generate secret
+    secret = generate_secret(32)
+    metadata: Dict[str, Any] = {"projects": projects, "notes": notes, "role": role}
+    try:
+        # persist via security helpers
+        from sec.security_helpers import persist_named_key as sh_persist_named_key
+        stored = sh_persist_named_key(name, secret, API_KEYS_FILE, metadata)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to persist new key: {e}")
+    # Reload API_KEYS
+    global API_KEYS
+    from sec.security_helpers import API_KEYS as SH_API_KEYS
+    API_KEYS = SH_API_KEYS
+    logger.info(f"Created API key for name={name}")
+    # Return plaintext secret once
+    stored_response = {k: v for k, v in stored.items() if k != "hash"}
+    stored_response["secret"] = secret
+    return stored_response
+
+@app.get("/admin/list-keys")
+async def admin_list_keys(request: Request):
+    require_admin_header(request)
+    # Return list of names with metadata for identification
+    preview: Dict[str, Dict[str, Any]] = {}
+    for name, entry in API_KEYS.items():
+        if not isinstance(entry, dict):
+            entry = {"hash": str(entry)}
+        hash_value = entry.get("hash", "")
+        hash_preview = (
+            f"{hash_value[:8]}...{hash_value[-6:]}" if isinstance(hash_value, str) and len(hash_value) > 14 else hash_value
+        )
+        preview[name] = {
+            "hash_preview": hash_preview,
+            "projects": entry.get("projects", []),
+            "role": entry.get("role", "user"),
+            "created_at": entry.get("created_at"),
+            "notes": entry.get("notes"),
+        }
+    return {"keys": preview}
+
+@app.post("/admin/revoke-key")
+async def admin_revoke_key(request: Request):
+    require_admin_header(request)
+
+    data = await request.json()
+    name_to_revoke = data.get("name")
+    if not name_to_revoke:
+        raise HTTPException(status_code=400, detail="'name' is required in body")
+
+    from sec.security_helpers import remove_api_key as sh_remove_api_key, API_KEYS as SH_API_KEYS
+    removed = sh_remove_api_key(name_to_revoke, API_KEYS_FILE)
+    if removed:
+        global API_KEYS
+        API_KEYS = SH_API_KEYS
+        logger.info(f"Revoked API key name={name_to_revoke}")
+        return {"status": "revoked", "name": name_to_revoke}
+    else:
+        raise HTTPException(status_code=404, detail="Key name not found")
+
+@app.get("/admin/ui")
+async def admin_ui(request: Request):
+    """Serve a simple admin UI for listing, creating, and revoking keys, and testing model."""
+    return FileResponse("uis/security_admin_ui.html")
+
+@app.get("/ui")
+async def user_ui(request: Request):
+    """Serve a simple user UI that calls the /ai endpoint."""
+    return FileResponse("uis/security_user_ui.html")
+
+@app.post("/admin/models/list")
+async def admin_list_models(request: Request):
+    require_admin_header(request)
+    models = ai.list_models()
+    return {"models": models}
+
+@app.post("/admin/models/pull")
+async def admin_pull_model(request: Request):
+    """Pull a model by name (body: {"model": "name"})."""
+    require_admin_header(request)
+    data = await request.json()
+    model_name = data.get("model")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="'model' is required")
+    try:
+        ai.pull_model_name(model_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pull model: {e}")
+    return {"status": "pulled", "model": model_name}
+
+@app.post("/admin/models/delete")
+async def admin_delete_model(request: Request):
+    require_admin_header(request)
+    data = await request.json()
+    model_name = data.get("model")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="'model' is required")
+    try:
+        ai.remove_model(model_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
+    return {"status": "deleted", "model": model_name}
+
+@app.post("/admin/models/switch")
+async def admin_switch_model(request: Request):
+    require_admin_header(request)
+    data = await request.json()
+    model_name = data.get("model")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="'model' is required")
+    # Change model inside ai_helpers
+    ai.set_model(model_name)
+    return {"status": "switched", "model": model_name}
+
+@app.post("/admin/git-pull")
+async def admin_git_pull(request: Request):
+    require_admin_header(request)
+    try:
+        res = subprocess.run(["git", "fetch", "--all"], cwd=str(Path('.').absolute()), capture_output=True, text=True)
+        res2 = subprocess.run(["git", "pull"], cwd=str(Path('.').absolute()), capture_output=True, text=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Git command failed: {e}")
+    return {"fetch": res.stdout + res.stderr, "pull": res2.stdout + res2.stderr}
 
 # Entry point
 if __name__ == "__main__":
-    print("🚀 Starting GroupMe bot server...")
-    if(not STRIKES_FILE.exists()):
-        STRIKES_FILE.write_text("{}")
-    if(not CONVERSATIONS_FILE.exists()):
-        CONVERSATIONS_FILE.write_text("{}")
+    log_and_print("🚀 Starting bot server...")
+    if(not gm.STRIKES_FILE.exists()):
+        gm.STRIKES_FILE.write_text("{}")
+    if(not gm.CONVERSATIONS_FILE.exists()):
+        gm.CONVERSATIONS_FILE.write_text("{}")
     # Ensure training file exists
-    if not TRAINING_FILE.exists():
-        TRAINING_FILE.write_text(json.dumps({"messages": []}))
-    if not check_model_availability():
-        pull_model()
-    Thread(target=accept_invites).start()
+    if not gm.TRAINING_FILE.exists():
+        gm.TRAINING_FILE.write_text(json.dumps({"messages": []}))
+    if not ai.check_model_availability():
+        ai.pull_model()
+    # start invite acceptor from groupme helpers
+    Thread(target=gm.accept_invites, daemon=True).start()
     uvicorn.run("anti_clanker:app", host="0.0.0.0", port=7110, reload=True)
