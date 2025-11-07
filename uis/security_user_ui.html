@@ -84,6 +84,29 @@
         font-size: 12px;
         margin-left: 8px;
       }
+      .loading-indicator {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        color: #93c5fd;
+        font-size: 14px;
+      }
+      .loading-indicator.active {
+        display: flex;
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid rgba(147, 197, 253, 0.25);
+        border-top-color: #3b82f6;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
       label {
         display: block;
         font-size: 14px;
@@ -165,9 +188,13 @@
             <input type="checkbox" id="thinkToggle" /> Think mode
           </label>
         </div>
-        <div style="display: flex; gap: 8px">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
           <button class="btn" id="runBtn">Run AI</button>
           <button class="btn secondary" id="clearBtn2">Clear Output</button>
+          <div id="loadingIndicator" class="loading-indicator">
+            <span class="spinner"></span>
+            <span>Processing…</span>
+          </div>
         </div>
         <div>
           <h3 style="margin-bottom: 8px">Output</h3>
@@ -181,6 +208,8 @@
       const lastOutEl = document.getElementById("lastOut");
       const outEl = document.getElementById("out");
       const projectHelpEl = document.getElementById("projectHelp");
+      const runBtn = document.getElementById("runBtn");
+      const loadingEl = document.getElementById("loadingIndicator");
 
       function getKey() {
         return localStorage.getItem("api_key") || "";
@@ -299,6 +328,15 @@
         return data;
       }
 
+      function setLoading(isLoading) {
+        if (!runBtn) return;
+        runBtn.disabled = isLoading;
+        runBtn.textContent = isLoading ? "Running..." : "Run AI";
+        if (loadingEl) {
+          loadingEl.classList.toggle("active", isLoading);
+        }
+      }
+
       document.getElementById("loginBtn").onclick = async () => {
         const value = prompt("Enter your API key:", getKey()) || "";
         setKey(value.trim());
@@ -315,13 +353,17 @@
         setProject(value);
       };
 
-      document.getElementById("runBtn").onclick = async () => {
+      runBtn.onclick = async () => {
+        setLoading(true);
         try {
           const data = await callAi();
+          if (!data) return;
           outEl.textContent = JSON.stringify(data, null, 2);
           lastOutEl.textContent = JSON.stringify(data, null, 2);
         } catch (err) {
           outEl.textContent = String(err.message || err);
+        } finally {
+          setLoading(false);
         }
       };
 
