@@ -303,7 +303,7 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
 
 @app.post("/admin/generate-key")
 async def admin_generate_key(request: Request):
-    """Generate a new API key and persist it. Requires admin header defined in admin_key.txt."""
+    """Generate a new API key and persist it. Requires admin header defined in admin.key."""
     # Validate admin header using central helper
     require_admin_header(request)
 

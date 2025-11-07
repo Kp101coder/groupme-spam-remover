@@ -6,8 +6,8 @@ from fastapi.security import APIKeyHeader
 from sec.key_helpers import load_api_keys, verify_secret
 from sec.key_helpers import persist_named_key as kh_persist_named_key
 
-API_KEYS_FILE = Path("sec/api_keys.json")
-ADMIN_KEY_FILE = Path("sec/admin_key.json")
+API_KEYS_FILE = Path("sec/users.key")
+ADMIN_KEY_FILE = Path("sec/admin.key")
 API_KEY_HEADER_NAME = "X-API-Key"
 ADMIN_KEY_HEADER_NAME = "X-API-Admin-Key"
 API_PROJECT_HEADER_NAME = "X-API-Project"
