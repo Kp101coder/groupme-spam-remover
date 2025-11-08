@@ -70,6 +70,8 @@
         overflow-x: auto;
         font-size: 14px;
         line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
       .status {
         font-size: 14px;
@@ -197,7 +199,11 @@
           </div>
         </div>
         <div>
-          <h3 style="margin-bottom: 8px">Output</h3>
+          <h3 style="margin-bottom: 8px">Request</h3>
+          <pre id="requestOut" style="min-height: 120px"></pre>
+        </div>
+        <div>
+          <h3 style="margin-bottom: 8px">Response</h3>
           <pre id="out" style="min-height: 160px"></pre>
         </div>
       </section>
@@ -206,7 +212,8 @@
     <script>
       const statusEl = document.getElementById("status");
       const lastOutEl = document.getElementById("lastOut");
-      const outEl = document.getElementById("out");
+  const outEl = document.getElementById("out");
+  const requestOutEl = document.getElementById("requestOut");
       const projectHelpEl = document.getElementById("projectHelp");
       const runBtn = document.getElementById("runBtn");
       const loadingEl = document.getElementById("loadingIndicator");
@@ -316,6 +323,24 @@
         if (trainEnd) payload.train_end = trainEnd;
         if (think) payload.think = true;
 
+        if (requestOutEl) {
+          const headersPreview = {
+            "Content-Type": "application/json",
+            "X-API-Key": "[hidden]",
+          };
+          if (project) headersPreview["X-API-Project"] = project;
+          requestOutEl.textContent = JSON.stringify(
+            {
+              method: "POST",
+              url: "/ai",
+              headers: headersPreview,
+              body: payload,
+            },
+            null,
+            2
+          );
+        }
+
         const res = await fetch("/ai", {
           method: "POST",
           headers,
@@ -369,6 +394,7 @@
 
       document.getElementById("clearBtn2").onclick = () => {
         outEl.textContent = "";
+        if (requestOutEl) requestOutEl.textContent = "";
         lastOutEl.textContent = "";
       };
 

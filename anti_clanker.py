@@ -20,6 +20,7 @@ from sec.security_helpers import (
     ADMIN_KEY_HEADER_NAME,
     require_api_key,
     require_admin_header,
+    remove_api_key,
 )
 
 doBans = True  # Set to True to ban users after max strikes, False to only remove them
@@ -325,10 +326,10 @@ async def admin_generate_key(request: Request):
         stored = sh_persist_named_key(name, secret, API_KEYS_FILE, metadata)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to persist new key: {e}")
-    # Reload API_KEYS
+    # Update local cache without re-importing
     global API_KEYS
-    from sec.security_helpers import API_KEYS as SH_API_KEYS
-    API_KEYS = SH_API_KEYS
+    stored_entry = {k: v for k, v in stored.items() if k != "name"}
+    API_KEYS[name] = stored_entry
     logger.info(f"Created API key for name={name}")
     # Return plaintext secret once
     stored_response = {k: v for k, v in stored.items() if k != "hash"}
@@ -365,11 +366,10 @@ async def admin_revoke_key(request: Request):
     if not name_to_revoke:
         raise HTTPException(status_code=400, detail="'name' is required in body")
 
-    from sec.security_helpers import remove_api_key as sh_remove_api_key, API_KEYS as SH_API_KEYS
-    removed = sh_remove_api_key(name_to_revoke, API_KEYS_FILE)
+    removed = remove_api_key(name_to_revoke, API_KEYS_FILE)
     if removed:
         global API_KEYS
-        API_KEYS = SH_API_KEYS
+        API_KEYS.pop(name_to_revoke, None)
         logger.info(f"Revoked API key name={name_to_revoke}")
         return {"status": "revoked", "name": name_to_revoke}
     else:

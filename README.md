@@ -1,77 +1,77 @@
-# groupme-spam-remover
+# GroupMe Spam Remover
 
-Removes Spam from a GroupMe chat using DeepSeek Ollama.
+A FastAPI service that watches GroupMe conversations and uses an Ollama-hosted LLM to flag and react to spam in real time. The project also exposes lightweight web consoles for operators and testers.
 
-## Security and API Key setup
+## Feature Highlights
 
-This service exposes HTTP endpoints. The HTML console, `/status`, and the GroupMe webhook (`/kill-da-clanker`) remain public. All other routes require a valid API key supplied in the `X-API-Key` header. Keys can optionally be scoped to projects by sending `X-API-Project: <project>`; when a key declares one or more projects, requests must include a matching project header.
+- GroupMe webhook (`/kill-da-clanker`) that classifies incoming messages and applies strike/banning rules.
+- `/ai` endpoint for direct access to the underlying prompt logic, plus a user-facing playground UI.
+- Admin console for managing API credentials and the Ollama model catalog.
+- Project-scoped API keys so different automations can be isolated without running separate deployments.
 
-### Provisioning keys manually
+## Quick Start
 
-Keys live in `api_keys.json` and are stored as Argon2 hashes along with optional metadata:
+1. **Install dependencies.** Use Python 3.11+ and install the required packages:
+   ```cmd
+   pip install fastapi uvicorn[standard] argon2-cffi ollama requests python-dotenv
+   ```
+   Adjust if you already maintain a requirements file for your environment.
 
-```json
-{
-  "api_keys": [
-    {
-      "name": "groupme-service",
-      "hash": "argon2id$...",
-      "projects": ["groupme"],
-      "role": "service",
-      "created_at": "2025-11-04T17:25:01.123456+00:00"
-    }
-  ]
-}
-```
+2. **Generate an admin key.** Run:
+   ```cmd
+   python sec/generate_admin_key.py
+   ```
+   Copy the printed secret; you will not see it again. The hashed form is stored in `sec/admin.key`.
 
-Use the Admin UI (`/admin/ui`) to generate keys and copy the plaintext secret once. You can also call `POST /admin/generate-key` with JSON payload `{"name": "discord-bot", "projects": "discord", "role": "service"}` to create scoped keys via API.
+3. **Start the service.**
+   ```cmd
+   uvicorn anti_clanker:app --host 0.0.0.0 --port 7110 --reload
+   ```
+   The webhook and UIs are now available under `http://localhost:7110/`.
 
-Plain-text key lists (`api_keys.txt`) are no longer supported.
+4. **Configure the GroupMe bot.** Point your GroupMe callback URL at `/kill-da-clanker` on a publicly reachable address (ngrok, reverse proxy, etc.).
 
-Important non-code security steps you must take:
+## Authentication Model
 
-- Run this behind HTTPS (use a reverse proxy like NGINX or a cloud provider's load balancer). Do not expose the app directly over plain HTTP on the public internet.
-- Store API keys in a secrets manager (AWS Secrets Manager, Azure Key Vault, HashiCorp Vault) for production instead of files.
-- Rotate keys periodically and remove unused keys.
-- Limit network access with firewalls / security groups so only trusted IPs or services can reach the app.
-- (Optional) Use mTLS or OAuth2 for stronger authentication if required.
+### Admin key
 
-When deploying, ensure the `access_token.txt` and model files are protected and only readable by the service user.
+- Stored hashed in `sec/admin.key` and supplied via the `X-API-Admin-Key` header (or `admin_key` query parameter).
+- Required for all `/admin/*` routes and the Admin UI login.
+- Only the hashed value is kept on disk; regenerate with `python sec/generate_admin_key.py` if the secret is lost or compromised.
 
-## Running at home (port forwarding)
+### API keys (user/service/admin roles)
 
-If you want to run this on a home PC with port forwarding, follow these additional steps:
+- Persisted in `sec/users.key` as Argon2 hashes.
+- Sent with `X-API-Key` (or `api_key` query parameter) on protected endpoints such as `/ai`.
+- Roles are metadata to help you differentiate callers:
+  - `user`: interactive clients, default permissions.
+  - `service`: background jobs or other automations.
+  - `admin`: still verified like any other API key, but marked clearly in listings.
+- The plaintext secret is only shown once when a key is generated through the admin console or API.
 
-1. Reserve a static local IP for your machine (DHCP reservation on your router) or use the machine's local IP.
-2. Forward ports 80 and 443 from your router to your machine's local IP.
-3. Ensure your ISP allows inbound traffic on those ports (some ISPs block 80/443).
-4. Use a reverse proxy (Caddy or Nginx) on your machine to obtain and manage Let's Encrypt certificates, forwarding to `127.0.0.1:7110`.
+### Project scoping
 
-Example using Caddy on a home machine (Caddy will request certs from Let's Encrypt):
+- Keys can include a `projects` array. When present, every request made with that key must send `X-API-Project` with one of the allowed values.
+- Use this to isolate different integrations (e.g., `groupme`, `discord`, `internal-tool`).
+- Omit `projects` or include `"*"` for wildcard access across all projects.
 
-```text
-example.com {
-  reverse_proxy 127.0.0.1:7110
-}
-```
+## Web Consoles
 
-Then run the app bound to localhost:
+- `/admin/ui`: Manage API keys, view metadata, and run Ollama model operations (pull, delete, switch). Requires the admin key to log in.
+- `/user_ui`: Playground for the `/ai` endpoint. Users can supply the main text plus optional system message, training snippets, conversation history, and the `think` flag. The UI now shows both the request payload and response JSON for easier API onboarding.
 
-```cmd
-python -m uvicorn anti_clanker:app --host 127.0.0.1 --port 7110
-```
+## HTTP Endpoints
 
-If you cannot open ports or want a quick option for public HTTPS, use ngrok to create a secure tunnel and use the ngrok URL for callbacks.
+- `POST /kill-da-clanker`: GroupMe webhook entry point.
+- `POST /ai`: Invoke the moderation prompt manually (requires `X-API-Key`).
+- `POST /auth/login`: Validate an API key and return metadata (role, allowed projects).
+- `/admin/*`: Key management, model management, and git utilities — all require `X-API-Admin-Key`.
+- `GET /status`: Lightweight health probe.
 
-## Admin endpoints
+## Security Notes
 
-- POST `/admin/generate-key` (header `X-API-Admin-Key`): create a new API key (accepts optional `projects`, `role`, `notes` fields)
-- GET `/admin/list-keys` (header `X-API-Admin-Key`): list key metadata without revealing secrets
-- POST `/admin/revoke-key` (header `X-API-Admin-Key`, body `{ "name": "..." }`): revoke key by name
-- POST `/admin/models/list` (header `X-API-Admin-Key`): list ollama models
-- POST `/admin/models/pull` (header `X-API-Admin-Key`, body `{model}`): pull model
-- POST `/admin/models/delete` (header `X-API-Admin-Key`, body `{model}`): delete model
-- POST `/admin/models/switch` (header `X-API-Admin-Key`, body `{model}`): switch active model
-- POST `/admin/git-pull` (header `X-API-Admin-Key`): run `git fetch` + `git pull` and return output
+- Always run behind HTTPS when exposed publicly. Terminate TLS at a reverse proxy (Caddy, Nginx, cloud load balancer) and forward to the FastAPI app.
+- Keep `sec/` contents and any Ollama model files restricted to the service account.
+- Rotate API keys regularly and remove stale entries using the admin tools.
 
-Note: Admin endpoints are protected by the admin key in `admin_key.txt` (or `admin_key.json`).
+Happy moderating!
