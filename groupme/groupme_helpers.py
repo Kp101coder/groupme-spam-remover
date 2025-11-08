@@ -157,8 +157,13 @@ def thanos(name, user_id, text, prompt_fn):
     )
     response = prompt_fn(text, thanos_system_prompt, user_conversation)
     if response:
-        add_to_conversation(user_id, "assistant", response)
-        post_bot_message(f"@{name}, {response}")
+        reply_text = None
+        if isinstance(response, dict):
+            reply_text = response.get("content")
+        if not reply_text:
+            reply_text = str(response)
+        add_to_conversation(user_id, "assistant", reply_text)
+        post_bot_message(f"@{name}, {reply_text}")
         return {"status": "bot_mentioned"}
     else:
         post_bot_message(f"@{name}, I am... inevitable. But my words fail me at this moment.")

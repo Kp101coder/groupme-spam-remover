@@ -1,5 +1,5 @@
 import ollama
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 # AI model config - kept inside this module since helpers operate on the model
 MODEL = "deepseek-r1:14b"
@@ -59,11 +59,66 @@ def remove_model(name: str) -> None:
     """Remove an arbitrary model by name."""
     ollama.delete(name)
 
-def prompt(message: str, system_message: str = None, data: List[dict] = None, train_start: Optional[str] = None, train_end: Optional[str] = None, think: bool = False) -> Optional[str]:
-    """Send a prompt to the model. Raises on client errors; caller must catch/log.
+def _ns_to_seconds(value: Any) -> Optional[float]:
+    if not isinstance(value, (int, float)):
+        return None
+    return round(float(value) / 1_000_000_000, 6)
 
-    This function is a direct copy of the server prompt logic but doesn't swallow
-    exceptions. It returns the final response content string.
+
+def _coerce_to_dict(obj: Any) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        return obj
+    if obj is None:
+        return {}
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
+    try:
+        return dict(obj)
+    except Exception:
+        pass
+    try:
+        return vars(obj)
+    except Exception:
+        return {}
+
+
+def _extract_content(raw_content: str) -> Dict[str, Optional[str]]:
+    if not raw_content:
+        return {"content": None, "thinking": None, "raw_content": None}
+
+    thinking_text: Optional[str] = None
+    final_content = raw_content
+
+    if "</think>" in raw_content:
+        think_start = raw_content.find("<think>")
+        think_end = raw_content.find("</think>")
+        if think_start != -1 and think_end != -1 and think_end > think_start:
+            start_idx = think_start + len("<think>")
+            thinking_text = raw_content[start_idx:think_end].strip()
+            final_content = raw_content[think_end + len("</think>"):].strip()
+        else:
+            final_content = raw_content.strip()
+    else:
+        final_content = raw_content.strip()
+
+    return {
+        "content": final_content or None,
+        "thinking": thinking_text,
+        "raw_content": raw_content,
+    }
+
+
+def prompt(message: str, system_message: str = None, data: List[dict] = None, train_start: Optional[str] = None, train_end: Optional[str] = None, think: bool = False) -> Optional[Dict[str, Any]]:
+    """Send a prompt to the model and return a structured response.
+
+    Returns a dict containing fields such as model, content, thinking, token counts,
+    and timing information (converted to seconds). Callers should handle errors.
     """
     messages = []
 
@@ -89,15 +144,50 @@ def prompt(message: str, system_message: str = None, data: List[dict] = None, tr
         stream=False,
         think=think
     )
-    # response structure expected to contain ['message']['content']
-    if isinstance(response, dict) and 'message' in response and 'content' in response['message']:
-        response_content = response['message']['content']
-    else:
-        # Fallback to string representation
-        return str(response)
+    response_dict = response if isinstance(response, dict) else _coerce_to_dict(response)
+    if not response_dict:
+        return {"model": MODEL, "content": str(response)}
 
-    if not think and "</think>" in response_content:
-        # Strip any think tags and return everything after the final </think>
-        response_content = response_content[response_content.find("</think>") + 8:].strip()
+    message_block = _coerce_to_dict(response_dict.get("message"))
+    raw_content = message_block.get("content") or ""
+    extracted = _extract_content(raw_content)
 
-    return response_content
+    thinking_text = extracted["thinking"]
+    if not thinking_text:
+        raw_think = message_block.get("thinking") or response_dict.get("thinking")
+        if isinstance(raw_think, str):
+            thinking_text = raw_think.strip() or None
+
+    top_level: Dict[str, Any] = {
+        "model": response_dict.get("model", MODEL),
+        "created_at": response_dict.get("created_at"),
+        "done": response_dict.get("done"),
+        "done_reason": response_dict.get("done_reason"),
+        "prompt_eval_count": response_dict.get("prompt_eval_count"),
+        "eval_count": response_dict.get("eval_count"),
+        "total_duration_s": _ns_to_seconds(response_dict.get("total_duration")),
+        "load_duration_s": _ns_to_seconds(response_dict.get("load_duration")),
+        "prompt_eval_duration_s": _ns_to_seconds(response_dict.get("prompt_eval_duration")),
+        "eval_duration_s": _ns_to_seconds(response_dict.get("eval_duration")),
+        "content": extracted["content"] or extracted["raw_content"],
+        "thinking": thinking_text,
+    }
+
+    for key in [
+        "created_at",
+        "done",
+        "done_reason",
+        "prompt_eval_count",
+        "eval_count",
+        "total_duration_s",
+        "load_duration_s",
+        "prompt_eval_duration_s",
+        "eval_duration_s",
+    ]:
+        if top_level.get(key) is None:
+            top_level.pop(key, None)
+
+    if not top_level.get("content"):
+        top_level.pop("content", None)
+
+    return top_level

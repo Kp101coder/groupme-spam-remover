@@ -191,12 +191,27 @@ def contains_banned(text: str):
     if not text or text.isspace() or text == "":
         return False
     # Use original text (not normalized) so the model can leverage phone numbers, $ amounts, etc.
-    response = ai.prompt(text, SYSTEM_MESSAGE, gm.training.get("messages", []), "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.", "End of examples. Classify the next message. Respond with only Yes or No.")
+    response = ai.prompt(
+        text,
+        SYSTEM_MESSAGE,
+        gm.training.get("messages", []),
+        "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.",
+        "End of examples. Classify the next message. Respond with only Yes or No.",
+    )
 
     log_and_print(f"Model response: {response}")
     if not response:
         return False
-    answer = response.strip().lower()
+    content = ""
+    if isinstance(response, dict):
+        content = (response.get("content") or "").strip().lower()
+        if not content:
+            content = str(response).strip().lower()
+    else:
+        content = str(response).strip().lower()
+    if not content:
+        return False
+    answer = content
     if answer.startswith("yes"):
         log_and_print("Banned content detected by model.")
         return True
@@ -298,9 +313,11 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
 
     # Call prompt
     result = ai.prompt(text, system_message, data_list, train_start, train_end, think)
-    if result is None:
+    if not result:
         raise HTTPException(status_code=500, detail="Model error or unavailable")
-    return {"output": result}
+    if isinstance(result, dict):
+        return result
+    return {"model": ai.MODEL, "content": str(result)}
 
 @app.post("/admin/generate-key")
 async def admin_generate_key(request: Request):
