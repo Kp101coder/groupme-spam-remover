@@ -41,6 +41,7 @@ SYSTEM_MESSAGE = (
 last_action = None
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
 admins = {a.lower() for a in gm.admin if isinstance(a, str)}
 API_KEYS: Dict[str, Dict[str, Any]] = API_KEYS
 
@@ -477,4 +478,4 @@ if __name__ == "__main__":
         ai.pull_model()
     # start invite acceptor from groupme helpers
     Thread(target=gm.accept_invites, daemon=True).start()
-    uvicorn.run("anti_clanker:app", host="0.0.0.0", port=7110, reload=True)
+    uvicorn.run("anti_clanker:app", host="0.0.0.0", port=443, reload=False, ssl_keyfile='/etc/letsencrypt/live/vaayuronics.com/privkey.pem', ssl_certfile='/etc/letsencrypt/live/vaayuronics.com/fullchain.pem')
