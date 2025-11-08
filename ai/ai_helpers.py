@@ -1,29 +1,46 @@
-import ollama
 from typing import Any, Dict, List, Optional
+import ollama
 
-# AI model config - kept inside this module since helpers operate on the model
+
+# Update these module-level values to customize the model or Ollama host.
 MODEL = "deepseek-r1:14b"
-ollama_model = ollama.Client()
+OLLAMA_HOST = "http://192.168.4.212:11434"  # Required; service will fail fast if unreachable
+
+ollama_model = ollama.Client(host=OLLAMA_HOST)
+
+def get_model() -> str:
+    """Return the name of the active model."""
+    return MODEL
+
+def get_host() -> Optional[str]:
+    """Return the configured Ollama host URL or None if using the default."""
+    return OLLAMA_HOST
+
+def _model_exists(name: str) -> bool:
+    response = ollama_model.list() or {}
+    models = response.get("models", []) if isinstance(response, dict) else response
+    available_models = [m.get("model") for m in models if isinstance(m, dict)]
+    return name in available_models
 
 
 def check_model_availability() -> bool:
-    """Return True if model is available locally (may raise on client errors)."""
-    models = ollama_model.list()
-    available_models = [m.get("model") for m in models.get("models", [])]
-    return MODEL in available_models
-
+    """Return True if the active model is available (may raise on client errors)."""
+    return _model_exists(MODEL)
 
 def pull_model() -> None:
     """Pull the configured model. Caller should handle exceptions."""
     ollama_model.pull(MODEL)
 
-
-def set_model(model_name: str) -> None:
-    """Update the module model name and reinitialize the client."""
-    global MODEL, ollama_model
-    MODEL = model_name
-    ollama_model = ollama.Client()
-
+def set_model(model_name: str) -> str:
+    """Switch to a different model if it has been downloaded. Returns the active model."""
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("Model name must be a non-empty string")
+    candidate = model_name.strip()
+    if not _model_exists(candidate):
+        raise ValueError(f"Model '{candidate}' is not available on the Ollama host")
+    global MODEL
+    MODEL = candidate
+    return MODEL
 
 def parse_yes_no_label(text: str) -> Optional[str]:
     """Return 'Yes' or 'No' if the model output starts or ends with either, else None."""
@@ -57,7 +74,8 @@ def pull_model_name(name: str) -> None:
 
 def remove_model(name: str) -> None:
     """Remove an arbitrary model by name."""
-    ollama.delete(name)
+    ollama_model.delete(name)
+
 
 def _ns_to_seconds(value: Any) -> Optional[float]:
     if not isinstance(value, (int, float)):

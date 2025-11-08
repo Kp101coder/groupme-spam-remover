@@ -443,8 +443,13 @@ async def admin_switch_model(request: Request):
     if not model_name:
         raise HTTPException(status_code=400, detail="'model' is required")
     # Change model inside ai_helpers
-    ai.set_model(model_name)
-    return {"status": "switched", "model": model_name}
+    try:
+        active_model = ai.set_model(model_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to switch model: {exc}") from exc
+    return {"status": "switched", "model": active_model}
 
 @app.post("/admin/git-pull")
 async def admin_git_pull(request: Request):
@@ -459,6 +464,8 @@ async def admin_git_pull(request: Request):
 # Entry point
 if __name__ == "__main__":
     log_and_print("🚀 Starting bot server...")
+    host = ai.get_host()
+    log_and_print(f"Ollama client configured for {host}")
     if(not gm.STRIKES_FILE.exists()):
         gm.STRIKES_FILE.write_text("{}")
     if(not gm.CONVERSATIONS_FILE.exists()):
