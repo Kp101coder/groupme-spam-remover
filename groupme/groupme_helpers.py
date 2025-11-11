@@ -209,9 +209,7 @@ def reckon(name, user_id, text, message_id):
                 banned.append(user_id)
                 _save_file({"banned": banned}, BANNED_FILE)
 
-
-def subgroup_reckon_worker(name, user_id, wait_seconds=30, contains_banned_fn=None):
-    sleep(wait_seconds)
+def subgroup_reckon_worker(name, user_id, contains_banned_fn=None):
     subgroups = get_subgroups()
     for subgroup in subgroups:
         last_message = subgroup.get("messages", {}).get("preview", {}).get("text", "")
