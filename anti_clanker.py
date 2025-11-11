@@ -237,7 +237,7 @@ async def callback(request: Request):
             return {"status": "undo"}
         # Handle @ignore First Last
         if "@ignore" in lower_text:
-            name = lower_text[lower_text.find(" ") + 1:lower_text.rfind(" ")]
+            name = lower_text[lower_text.find(" ") + 1:].strip()
 
             if name:
                 added = gm.add_to_ignored(name)
@@ -251,7 +251,7 @@ async def callback(request: Request):
                     return {"status": "ignored_exists", "user": name}
                 
         if "@ban" in lower_text:
-            name = lower_text[lower_text.find(" ") + 1:lower_text.rfind(" ")]
+            name = lower_text[lower_text.find(" ") + 1:].strip()
             if name:
                 banned_id = gm.get_member_id(name)
                 gm.ban(banned_id)
