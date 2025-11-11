@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os
 import subprocess
-from logs.logsys import log_and_print
+from logs.logsys import log_and_print, LOG_FILE
 import time
 from fastapi import FastAPI, Request
 from fastapi import HTTPException, Depends
@@ -57,6 +57,18 @@ ALLOWED_PATHS = {
 }
 
 STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg")
+
+
+def _tail_lines(path: Path, max_lines: int = 200) -> List[str]:
+    if not path.exists():
+        return []
+    try:
+        content = path.read_text().splitlines()
+    except Exception:
+        return []
+    if len(content) <= max_lines:
+        return content
+    return content[-max_lines:]
 
 
 def schedule_process_reload(delay: float = 1.0) -> None:
@@ -455,6 +467,45 @@ async def admin_git_pull(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Git command failed: {e}")
     return {"fetch": res.stdout + res.stderr, "pull": res2.stdout + res2.stderr}
+
+
+@app.get("/admin/logs/current")
+async def admin_current_log(request: Request, limit: int = 200):
+    """Return tail of current log file via query param (backwards compatible)."""
+    require_admin_header(request)
+    try:
+        max_lines = int(limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="'limit' must be an integer")
+    max_lines = max(1, min(max_lines, 2000))
+    lines = _tail_lines(LOG_FILE, max_lines)
+    return {"path": str(LOG_FILE), "lines": lines}
+
+
+@app.post("/admin/logs/refresh")
+async def admin_refresh_log(request: Request):
+    """Refresh/read the current log file. Accepts JSON body { "limit": <int> }.
+
+    This is the preferred endpoint for UI-driven refreshes.
+    """
+    require_admin_header(request)
+    try:
+        data = await request.json()
+    except Exception:
+        data = None
+
+    limit = 200
+    if isinstance(data, dict):
+        raw = data.get("limit")
+        if raw is not None:
+            try:
+                limit = int(raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="'limit' must be an integer")
+
+    limit = max(1, min(limit, 2000))
+    lines = _tail_lines(LOG_FILE, limit)
+    return {"path": str(LOG_FILE), "lines": lines}
 
 @app.post("/admin/server/reload")
 async def admin_reload_server(request: Request):

@@ -158,6 +158,22 @@
       margin: 0;
     }
 
+    .log-container {
+      max-height: 480px;
+      min-height: 360px;
+      overflow: auto;
+      background: #021022;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     @media (max-width: 1024px) {
       .wrap {
         flex-direction: column;
@@ -246,11 +262,22 @@
         </div>
         <pre id="maintenanceOut"></pre>
       </section>
+
+      <section class="section">
+        <h3>Current Log</h3>
+        <div class="actions">
+          <small id="logPath" class="muted"></small>
+          <button class="btn" id="scrollLog">Scroll to Bottom</button>
+        </div>
+        <pre id="logOut" class="log-container"></pre>
+      </section>
     </main>
   </div>
 
   <script>
     let adminKey = localStorage.getItem("admin_key") || "";
+    const LOG_REFRESH_MS = 30000;
+    let logIntervalId = null;
 
     function setAdminKey(value) {
       adminKey = value || "";
@@ -343,12 +370,15 @@
     }
 
     function clearUi() {
+      stopLogPolling();
       document.getElementById("keysList").innerHTML = "";
       document.getElementById("modelsList").innerHTML = "";
       document.getElementById("createOut").textContent = "";
       document.getElementById("revokeOut").textContent = "";
       document.getElementById("modelOut").textContent = "";
       document.getElementById("maintenanceOut").textContent = "";
+      document.getElementById("logOut").textContent = "";
+      document.getElementById("logPath").textContent = "";
     }
 
     function updateAuthButtons() {
@@ -364,6 +394,7 @@
       document.getElementById("reloadServer").disabled = !loggedIn;
       document.getElementById("reloadDelayValue").disabled = !loggedIn;
       document.getElementById("reloadDelayUnit").disabled = !loggedIn;
+      document.getElementById("scrollLog").disabled = !loggedIn;
     }
 
     document.getElementById("loginBtn").onclick = async () => {
@@ -375,6 +406,8 @@
         return;
       }
       await refreshAll();
+      await refreshLog();
+      startLogPolling();
     };
 
     document.getElementById("logoutBtn").onclick = () => {
@@ -385,6 +418,7 @@
 
     document.getElementById("reloadBtn").onclick = async () => {
       await refreshAll();
+      await refreshLog();
     };
 
     document.getElementById("createKeyBtn").onclick = async () => {
@@ -514,6 +548,9 @@
         if (path === "/admin/git-pull") {
           await refreshAll();
         }
+        if (path === "/admin/server/reload") {
+          await refreshLog();
+        }
       } catch (err) {
         document.getElementById("maintenanceOut").textContent = String(err);
       }
@@ -523,10 +560,65 @@
       handleMaintenanceAction("/admin/git-pull");
     document.getElementById("reloadServer").onclick = () =>
       handleMaintenanceAction("/admin/server/reload");
+    document.getElementById("scrollLog").onclick = () => {
+      const container = document.getElementById("logOut");
+      container.scrollTop = container.scrollHeight;
+    };
+
+    function stopLogPolling() {
+      if (logIntervalId !== null) {
+        clearInterval(logIntervalId);
+        logIntervalId = null;
+      }
+    }
+
+    function startLogPolling() {
+      stopLogPolling();
+      logIntervalId = setInterval(() => {
+        refreshLog(true);
+      }, LOG_REFRESH_MS);
+    }
+
+    async function refreshLog(auto = false) {
+      if (!adminKey) {
+        stopLogPolling();
+        return;
+      }
+      try {
+        const res = await callApi("/admin/logs/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 200 }),
+        });
+        const container = document.getElementById("logOut");
+        const pathLabel = document.getElementById("logPath");
+        const prevScrollTop = container.scrollTop;
+        const maxScrollTop = container.scrollHeight - container.clientHeight;
+        const nearBottom = maxScrollTop <= 0
+          ? true
+          : Math.abs(maxScrollTop - container.scrollTop) < 10;
+        const lines = Array.isArray(res.lines) ? res.lines : [];
+        container.textContent = lines.join("\n");
+        pathLabel.textContent = res.path ? `Viewing ${res.path}` : "";
+        if (nearBottom) {
+          container.scrollTop = container.scrollHeight;
+        } else {
+          const newMax = container.scrollHeight - container.clientHeight;
+          container.scrollTop = Math.max(0, Math.min(prevScrollTop, newMax));
+        }
+      } catch (err) {
+        if (!auto) {
+          document.getElementById("logOut").textContent = String(err);
+        }
+        console.error(err);
+      }
+    }
 
     if (adminKey) {
       updateAuthButtons();
       refreshAll();
+      refreshLog();
+      startLogPolling();
     } else {
       updateAuthButtons();
     }
