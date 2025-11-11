@@ -3,13 +3,13 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os
 import subprocess
+from logs.logsys import log_and_print
 import time
 from fastapi import FastAPI, Request
 from fastapi import HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from threading import Thread
-import logging
 from sec.key_helpers import generate_secret
 import ai.ai_helpers as ai
 import groupme.groupme_helpers as gm
@@ -43,37 +43,6 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 admins = {a.lower() for a in gm.admin if isinstance(a, str)}
 API_KEYS: Dict[str, Dict[str, Any]] = API_KEYS
-
-# Setup rotating log per process start inside `logging` dir
-LOG_DIR = Path("logging")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-def _next_log_path():
-    existing = [p.name for p in LOG_DIR.iterdir() if p.is_file() and p.name.startswith("log_") and p.suffix==".log"]
-    nums = []
-    for n in existing:
-        try:
-            nums.append(int(n.split("_")[1].split(".")[0]))
-        except Exception:
-            continue
-    next_idx = max(nums)+1 if nums else 0
-    return LOG_DIR / f"log_{next_idx}.log"
-
-LOG_FILE = _next_log_path()
-logging.basicConfig(level=logging.INFO, filename=str(LOG_FILE), filemode="a",
-                    format='%(asctime)s %(levelname)s %(message)s')
-logger = logging.getLogger("app")
-
-def log_and_print(msg: str, level: str = "info"):
-    # safe wrapper: never log secrets. Use only for general messages.
-    if level == "info":
-        logger.info(msg)
-        print(msg, flush=True)
-    elif level == "error":
-        logger.error(msg)
-        print(msg, flush=True)
-    else:
-        logger.debug(msg)
-        print(msg, flush=True)
 
 # Middleware to require API key for all routes except a small whitelist
 ALLOWED_PATHS = {
@@ -274,11 +243,11 @@ async def callback(request: Request):
                 added = gm.add_to_ignored(name)
                 if added:
                     gm.post_bot_message(f"Added '{name}' to the ignore list.")
-                    log_and_print(f"🚫 Added '{name}' to ignore list.", flush=True)
+                    log_and_print(f"🚫 Added '{name}' to ignore list.")
                     return {"status": "ignored_added", "user": name}
                 else:
                     gm.post_bot_message(f"'{name}' is already in the ignore list or invalid.")
-                    log_and_print(f"🚫 '{name}' is already in ignore list or invalid.", flush=True)
+                    log_and_print(f"🚫 '{name}' is already in ignore list or invalid.")
                     return {"status": "ignored_exists", "user": name}
                 
         if "@ban" in lower_text:
@@ -288,15 +257,15 @@ async def callback(request: Request):
                 gm.ban(banned_id)
                 if banned_id:
                     gm.post_bot_message(f"Banned user '{name}'.")
-                    log_and_print(f"🚫 Banned user '{name}'.", flush=True)
+                    log_and_print(f"🚫 Banned user '{name}'.")
                     return {"status": "banned", "user": name}
                 else:
                     gm.post_bot_message(f"User '{name}' not found or already banned.")
-                    log_and_print(f"🚫 User '{name}' not found or already banned.", flush=True)
+                    log_and_print(f"🚫 User '{name}' not found or already banned.")
                     return {"status": "ban_failed", "user": name}
 
     if name.lower() in gm.ignored:
-        log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
+        log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
         gm.like_message(message_id)
         return {"status": "ignored"}
 

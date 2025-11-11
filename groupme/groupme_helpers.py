@@ -2,6 +2,7 @@ import requests
 import json
 from pathlib import Path
 from time import sleep
+from logs.logsys import log_and_print
 # GroupMe config and API helpers
 BASE = "https://api.groupme.com/v3"
 ACCESS_TOKEN_FILE = Path("groupme/access_token.key")
@@ -228,12 +229,12 @@ def accept_invites():
     while True:
         try:
             sleep(WAIT_REQUESTS)  # Wait 5 minutes
-            print("⏳ Checking for pending membership requests...", flush=True)
+            log_and_print("⏳ Checking for pending membership requests...")
             url = f"{BASE}/groups/{GROUP_ID}/pending_memberships"
             r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
             if r.status_code == 200:
                 pending_memberships = r.json().get("response", [])
-                print(f"Found {len(pending_memberships)} pending memberships")
+                log_and_print(f"Found {len(pending_memberships)} pending memberships")
                 for membership in pending_memberships:
                     membership_id = membership.get("id")
                     user_id = membership.get("user_id")
@@ -243,13 +244,13 @@ def accept_invites():
                         # Deny
                         r2 = requests.post(approval_url, json={"approval": False}, params={"token": ACCESS_TOKEN}, timeout=10)
                         if r2.status_code == 200:
-                            print(f"Denied membership for banned user {nickname} ({user_id})", flush=True)
+                            log_and_print(f"Denied membership for banned user {nickname} ({user_id})")
                     else:
                         r2 = requests.post(approval_url, json={"approval": True}, params={"token": ACCESS_TOKEN}, timeout=10)
                         if r2.status_code == 200:
-                            print(f"Accepted membership for {nickname} ({user_id})", flush=True)
+                            log_and_print(f"Accepted membership for {nickname} ({user_id})")
             else:
-                print(f"Failed to get pending memberships: {r.status_code}", flush=True)
+                log_and_print(f"Failed to get pending memberships: {r.status_code}")
         except Exception as e:
-            print(f"Error in accept_invites: {e}", flush=True)
+            log_and_print(f"Error in accept_invites: {e}")
 
