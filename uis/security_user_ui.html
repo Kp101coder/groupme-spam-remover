@@ -1,409 +1,449 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>User AI Console</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <style>
-      body {
-        font-family: Segoe UI, Arial;
-        background: #071022;
-        color: #e6eef8;
-        margin: 0;
+
+<head>
+  <meta charset="utf-8" />
+  <title>User AI Console</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body {
+      font-family: Segoe UI, Arial;
+      background: #071022;
+      color: #e6eef8;
+      margin: 0;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px;
+      background: #071428;
+    }
+
+    main {
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .sidebar {
+      width: 260px;
+      background: #091833;
+      padding: 16px;
+      border-radius: 10px;
+    }
+
+    .content {
+      flex: 1;
+      padding: 16px;
+      border-radius: 10px;
+      background: #0b203f;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .btn {
+      background: #3b82f6;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn.secondary {
+      background: transparent;
+      border: 1px solid #3b82f6;
+    }
+
+    .input,
+    textarea {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(7, 20, 40, 0.6);
+      color: inherit;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 160px;
+    }
+
+    pre {
+      background: rgba(3, 10, 24, 0.9);
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status {
+      font-size: 14px;
+      color: #94a3b8;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+
+    .loading-indicator {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      color: #93c5fd;
+      font-size: 14px;
+    }
+
+    .loading-indicator.active {
+      display: flex;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(147, 197, 253, 0.25);
+      border-top-color: #3b82f6;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
       }
-      header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 16px;
-        background: #071428;
-      }
-      main {
-        display: flex;
-        gap: 16px;
-        padding: 16px;
-      }
-      .sidebar {
-        width: 260px;
-        background: #091833;
-        padding: 16px;
-        border-radius: 10px;
-      }
-      .content {
-        flex: 1;
-        padding: 16px;
-        border-radius: 10px;
-        background: #0b203f;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-      .btn {
-        background: #3b82f6;
-        color: #fff;
-        padding: 8px 12px;
-        border-radius: 6px;
-        border: none;
-        cursor: pointer;
-      }
-      .btn.secondary {
-        background: transparent;
-        border: 1px solid #3b82f6;
-      }
-      .input,
-      textarea {
-        width: 100%;
-        padding: 8px;
-        border-radius: 6px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(7, 20, 40, 0.6);
-        color: inherit;
-      }
-      textarea {
-        resize: vertical;
-        min-height: 160px;
-      }
-      pre {
-        background: rgba(3, 10, 24, 0.9);
-        padding: 12px;
-        border-radius: 6px;
-        overflow-x: auto;
-        font-size: 14px;
-        line-height: 1.4;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .status {
-        font-size: 14px;
-        color: #94a3b8;
-      }
-      .badge {
-        display: inline-block;
-        background: rgba(59, 130, 246, 0.2);
-        color: #93c5fd;
-        padding: 4px 8px;
-        border-radius: 999px;
-        font-size: 12px;
-        margin-left: 8px;
-      }
-      .loading-indicator {
-        display: none;
-        align-items: center;
-        gap: 8px;
-        color: #93c5fd;
-        font-size: 14px;
-      }
-      .loading-indicator.active {
-        display: flex;
-      }
-      .spinner {
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        border: 2px solid rgba(147, 197, 253, 0.25);
-        border-top-color: #3b82f6;
-        animation: spin 0.8s linear infinite;
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      label {
-        display: block;
-        font-size: 14px;
-        margin-bottom: 4px;
-      }
-    </style>
-  </head>
-  <body>
-    <header>
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h2 style="margin: 0">User AI Console</h2>
+      <div class="status" id="status">Not authenticated</div>
+    </div>
+    <div style="display: flex; gap: 8px">
+      <button id="loginBtn" class="btn">Login</button>
+      <button id="clearBtn" class="btn secondary">Clear Key</button>
+    </div>
+  </header>
+  <main>
+    <aside class="sidebar">
+      <h3>Session</h3>
       <div>
-        <h2 style="margin: 0">User AI Console</h2>
-        <div class="status" id="status">Not authenticated</div>
+        <label for="projectInput">Project</label>
+        <input id="projectInput" class="input" placeholder="e.g. groupme" />
+        <small id="projectHelp" style="color: #94a3b8"></small>
       </div>
-      <div style="display: flex; gap: 8px">
-        <button id="loginBtn" class="btn">Login</button>
-        <button id="clearBtn" class="btn secondary">Clear Key</button>
+      <button id="saveProjectBtn" class="btn" style="width: 100%">
+        Save Project
+      </button>
+      <hr style="border-color: rgba(255, 255, 255, 0.08)" />
+      <h3>Quick Actions</h3>
+      <button class="btn" id="runSample" style="width: 100%">
+        Run Spam Sample
+      </button>
+      <button class="btn secondary" id="quickRunBtn" style="width: 100%; margin-top: 8px">
+        Run Current Prompt
+      </button>
+      <pre id="lastOut" style="margin-top: 12px; min-height: 80px"></pre>
+    </aside>
+    <section class="content">
+      <div>
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" placeholder="Enter text to classify or ask"></textarea>
       </div>
-    </header>
-    <main>
-      <aside class="sidebar">
-        <h3>Session</h3>
-        <div>
-          <label for="projectInput">Project</label>
-          <input id="projectInput" class="input" placeholder="e.g. groupme" />
-          <small id="projectHelp" style="color: #94a3b8"></small>
+      <div>
+        <label for="systemMessage">System Message (optional)</label>
+        <textarea id="systemMessage" placeholder="Override the default system message"
+          style="min-height: 120px"></textarea>
+      </div>
+      <div>
+        <label for="trainStart">Train Start (optional)</label>
+        <textarea id="trainStart" placeholder="Text to prepend before training examples"
+          style="min-height: 80px"></textarea>
+      </div>
+      <div>
+        <label for="conversationData">Conversation Data JSON (optional)</label>
+        <textarea id="conversationData"
+          placeholder='Provide an array of chat turns, e.g. [{"role":"user","content":"Example"}]'
+          style="min-height: 160px"></textarea>
+      </div>
+      <div>
+        <label for="trainEnd">Train End (optional)</label>
+        <textarea id="trainEnd" placeholder="Text to append after training examples"
+          style="min-height: 80px"></textarea>
+      </div>
+      <div style="display: flex; gap: 12px; align-items: center">
+        <label style="margin: 0; display: flex; align-items: center; gap: 6px">
+          <input type="checkbox" id="thinkToggle" /> Think mode
+        </label>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <button class="btn" id="runBtn">Run AI</button>
+        <button class="btn secondary" id="clearBtn2">Clear Output</button>
+        <div id="loadingIndicator" class="loading-indicator">
+          <span class="spinner"></span>
+          <span>Processing…</span>
         </div>
-        <button id="saveProjectBtn" class="btn" style="width: 100%">
-          Save Project
-        </button>
-        <hr style="border-color: rgba(255, 255, 255, 0.08)" />
-        <h3>Quick Actions</h3>
-        <button class="btn" id="runSample" style="width: 100%">
-          Run Spam Sample
-        </button>
-        <pre id="lastOut" style="margin-top: 12px; min-height: 80px"></pre>
-      </aside>
-      <section class="content">
-        <div>
-          <label for="prompt">Prompt</label>
-          <textarea
-            id="prompt"
-            placeholder="Enter text to classify or ask"
-          ></textarea>
-        </div>
-        <div>
-          <label for="systemMessage">System Message (optional)</label>
-          <textarea
-            id="systemMessage"
-            placeholder="Override the default system message"
-            style="min-height: 120px"
-          ></textarea>
-        </div>
-        <div>
-          <label for="trainStart">Train Start (optional)</label>
-          <textarea
-            id="trainStart"
-            placeholder="Text to prepend before training examples"
-            style="min-height: 80px"
-          ></textarea>
-        </div>
-        <div>
-          <label for="conversationData">Conversation Data JSON (optional)</label>
-          <textarea
-            id="conversationData"
-            placeholder='Provide an array of chat turns, e.g. [{"role":"user","content":"Example"}]'
-            style="min-height: 160px"
-          ></textarea>
-        </div>
-        <div>
-          <label for="trainEnd">Train End (optional)</label>
-          <textarea
-            id="trainEnd"
-            placeholder="Text to append after training examples"
-            style="min-height: 80px"
-          ></textarea>
-        </div>
-        <div style="display: flex; gap: 12px; align-items: center">
-          <label style="margin: 0; display: flex; align-items: center; gap: 6px">
-            <input type="checkbox" id="thinkToggle" /> Think mode
-          </label>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
-          <button class="btn" id="runBtn">Run AI</button>
-          <button class="btn secondary" id="clearBtn2">Clear Output</button>
-          <div id="loadingIndicator" class="loading-indicator">
-            <span class="spinner"></span>
-            <span>Processing…</span>
-          </div>
-        </div>
-        <div>
-          <h3 style="margin-bottom: 8px">Request</h3>
-          <pre id="requestOut" style="min-height: 120px"></pre>
-        </div>
-        <div>
-          <h3 style="margin-bottom: 8px">Response</h3>
-          <pre id="out" style="min-height: 160px"></pre>
-        </div>
-      </section>
-    </main>
+      </div>
+      <div>
+        <h3 style="margin-bottom: 8px">Request</h3>
+        <pre id="requestOut" style="min-height: 120px"></pre>
+      </div>
+      <div>
+        <h3 style="margin-bottom: 8px">Response</h3>
+        <pre id="out" style="min-height: 160px"></pre>
+      </div>
+    </section>
+  </main>
 
-    <script>
-      const statusEl = document.getElementById("status");
-      const lastOutEl = document.getElementById("lastOut");
-  const outEl = document.getElementById("out");
-  const requestOutEl = document.getElementById("requestOut");
-      const projectHelpEl = document.getElementById("projectHelp");
-      const runBtn = document.getElementById("runBtn");
-      const loadingEl = document.getElementById("loadingIndicator");
+  <script>
+    const statusEl = document.getElementById("status");
+    const lastOutEl = document.getElementById("lastOut");
+    const outEl = document.getElementById("out");
+    const requestOutEl = document.getElementById("requestOut");
+    const projectHelpEl = document.getElementById("projectHelp");
+    const runBtn = document.getElementById("runBtn");
+    const quickRunBtn = document.getElementById("quickRunBtn");
+    const loadingEl = document.getElementById("loadingIndicator");
+    const promptEl = document.getElementById("prompt");
+    const systemMessageEl = document.getElementById("systemMessage");
+    const trainStartEl = document.getElementById("trainStart");
+    const trainEndEl = document.getElementById("trainEnd");
+    const conversationDataEl = document.getElementById("conversationData");
+    const thinkToggleEl = document.getElementById("thinkToggle");
+    const runBtnDefaultText = runBtn ? runBtn.textContent.trim() : "Run AI";
+    const quickRunDefaultText = quickRunBtn ? quickRunBtn.textContent.trim() : "Run Current Prompt";
 
-      function getKey() {
-        return localStorage.getItem("api_key") || "";
+    function safeString(value) {
+      return typeof value === "string" ? value : value == null ? "" : String(value);
+    }
+
+    function getKey() {
+      return localStorage.getItem("api_key") || "";
+    }
+
+    function setKey(value) {
+      if (value) {
+        localStorage.setItem("api_key", value);
+      } else {
+        localStorage.removeItem("api_key");
       }
+    }
 
-      function setKey(value) {
-        if (value) {
-          localStorage.setItem("api_key", value);
-        } else {
-          localStorage.removeItem("api_key");
-        }
+    function getProject() {
+      return localStorage.getItem("api_project") || "";
+    }
+
+    function setProject(value) {
+      if (value) {
+        localStorage.setItem("api_project", value);
+      } else {
+        localStorage.removeItem("api_project");
       }
+      document.getElementById("projectInput").value = value;
+    }
 
-      function getProject() {
-        return localStorage.getItem("api_project") || "";
+    async function refreshStatus() {
+      const key = getKey();
+      if (!key) {
+        statusEl.textContent = "Not authenticated";
+        projectHelpEl.textContent = "";
+        return;
       }
-
-      function setProject(value) {
-        if (value) {
-          localStorage.setItem("api_project", value);
-        } else {
-          localStorage.removeItem("api_project");
-        }
-        document.getElementById("projectInput").value = value;
-      }
-
-      async function refreshStatus() {
-        const key = getKey();
-        if (!key) {
-          statusEl.textContent = "Not authenticated";
-          projectHelpEl.textContent = "";
-          return;
-        }
-        try {
-          const res = await fetch("/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key }),
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "Login failed");
-          const allowedProjects = (data.projects || []).join(", ") || "*";
-          statusEl.innerHTML = `Hello ${data.name} <span class="badge">${
-            data.role || "user"
-          }</span>`;
-          projectHelpEl.textContent =
-            allowedProjects === "*"
-              ? "This key can access any project."
-              : `Allowed projects: ${allowedProjects}`;
-        } catch (err) {
-          statusEl.textContent = `Authentication failed: ${err.message}`;
-        }
-      }
-
-      async function callAi() {
-        const key = getKey();
-        if (!key) {
-          alert("Please login with an API key first.");
-          return;
-        }
-        const text = document.getElementById("prompt").value.trim();
-        if (!text) {
-          alert("Prompt text is required");
-          return;
-        }
-        const systemMessage = document
-          .getElementById("systemMessage")
-          .value.trim();
-        const trainStart = document
-          .getElementById("trainStart")
-          .value.trim();
-        const trainEnd = document
-          .getElementById("trainEnd")
-          .value.trim();
-        const think = document.getElementById("thinkToggle").checked;
-        const conversationDataRaw = document
-          .getElementById("conversationData")
-          .value.trim();
-
-        let conversationData;
-        if (conversationDataRaw) {
-          try {
-            const parsed = JSON.parse(conversationDataRaw);
-            if (!Array.isArray(parsed)) {
-              throw new Error("Conversation data must be an array");
-            }
-            conversationData = parsed;
-          } catch (err) {
-            alert(`Invalid conversation data JSON: ${err.message}`);
-            return;
-          }
-        }
-
-        const project = getProject();
-        const headers = {
-          "Content-Type": "application/json",
-          "X-API-Key": key,
-        };
-        if (project) headers["X-API-Project"] = project;
-        const payload = { text };
-        if (systemMessage) payload.system_message = systemMessage;
-        if (conversationData) payload.data = conversationData;
-        if (trainStart) payload.train_start = trainStart;
-        if (trainEnd) payload.train_end = trainEnd;
-        if (think) payload.think = true;
-
-        if (requestOutEl) {
-          const headersPreview = {
-            "Content-Type": "application/json",
-            "X-API-Key": "[hidden]",
-          };
-          if (project) headersPreview["X-API-Project"] = project;
-          requestOutEl.textContent = JSON.stringify(
-            {
-              method: "POST",
-              url: "/ai",
-              headers: headersPreview,
-              body: payload,
-            },
-            null,
-            2
-          );
-        }
-
-        const res = await fetch("/ai", {
+      try {
+        const res = await fetch("/auth/login", {
           method: "POST",
-          headers,
-          body: JSON.stringify(payload),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key }),
         });
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || data.error || res.statusText);
-        }
-        return data;
+        if (!res.ok) throw new Error(data.detail || "Login failed");
+        const allowedProjects = (data.projects || []).join(", ") || "*";
+        statusEl.innerHTML = `Hello ${data.name} <span class="badge">${data.role || "user"
+          }</span>`;
+        projectHelpEl.textContent =
+          allowedProjects === "*"
+            ? "This key can access any project."
+            : `Allowed projects: ${allowedProjects}`;
+      } catch (err) {
+        statusEl.textContent = `Authentication failed: ${err.message}`;
       }
+    }
 
-      function setLoading(isLoading) {
-        if (!runBtn) return;
-        runBtn.disabled = isLoading;
-        runBtn.textContent = isLoading ? "Running..." : "Run AI";
-        if (loadingEl) {
-          loadingEl.classList.toggle("active", isLoading);
-        }
+    async function callAi() {
+      const key = getKey();
+      if (!key) {
+        alert("Please login with an API key first.");
+        return;
       }
+      const text = promptEl.value.trim();
+      if (!text) {
+        alert("Prompt text is required");
+        return;
+      }
+      const systemMessage = systemMessageEl.value.trim();
+      const trainStart = trainStartEl.value.trim();
+      const trainEnd = trainEndEl.value.trim();
+      const think = thinkToggleEl.checked;
+      const conversationDataRaw = conversationDataEl
+        ? conversationDataEl.value.trim()
+        : "";
 
-      document.getElementById("loginBtn").onclick = async () => {
-        const value = prompt("Enter your API key:", getKey()) || "";
-        setKey(value.trim());
-        await refreshStatus();
-      };
-
-      document.getElementById("clearBtn").onclick = () => {
-        setKey("");
-        refreshStatus();
-      };
-
-      document.getElementById("saveProjectBtn").onclick = () => {
-        const value = document.getElementById("projectInput").value.trim();
-        setProject(value);
-      };
-
-      runBtn.onclick = async () => {
-        setLoading(true);
+      let conversationData;
+      if (conversationDataRaw) {
         try {
-          const data = await callAi();
-          if (!data) return;
-          outEl.textContent = JSON.stringify(data, null, 2);
-          lastOutEl.textContent = JSON.stringify(data, null, 2);
+          const parsed = JSON.parse(conversationDataRaw);
+          if (!Array.isArray(parsed)) {
+            throw new Error("Conversation data must be an array");
+          }
+          conversationData = parsed;
         } catch (err) {
-          outEl.textContent = String(err.message || err);
-        } finally {
-          setLoading(false);
+          alert(`Invalid conversation data JSON: ${err.message}`);
+          return;
         }
-      };
+      }
 
-      document.getElementById("clearBtn2").onclick = () => {
-        outEl.textContent = "";
-        if (requestOutEl) requestOutEl.textContent = "";
-        lastOutEl.textContent = "";
+      const project = getProject();
+      const headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": key,
       };
+      if (project) headers["X-API-Project"] = project;
+      const payload = { text };
+      if (systemMessage) payload.system_message = systemMessage;
+      if (conversationData) payload.data = conversationData;
+      if (trainStart) payload.train_start = trainStart;
+      if (trainEnd) payload.train_end = trainEnd;
+      if (think) payload.think = true;
 
-      document.getElementById("runSample").onclick = () => {
-        document.getElementById("prompt").value =
-          "Selling OU tickets, DM me at 555-1234";
-        document.getElementById("systemMessage").value =
-          "Classify the message as spam (Yes) or not spam (No).";
-        document.getElementById("conversationData").value = JSON.stringify(
+      if (requestOutEl) {
+        const headersPreview = {
+          "Content-Type": "application/json",
+          "X-API-Key": "[hidden]",
+        };
+        if (project) headersPreview["X-API-Project"] = project;
+        requestOutEl.textContent = JSON.stringify(
+          {
+            method: "POST",
+            url: "/ai",
+            headers: headersPreview,
+            body: payload,
+          },
+          null,
+          2
+        );
+      }
+
+      const res = await fetch("/ai", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || res.statusText);
+      }
+      const contentText = safeString(
+        data && typeof data === "object" ? data.content : ""
+      );
+
+      if (conversationDataEl) {
+        const history = Array.isArray(conversationData)
+          ? [...conversationData]
+          : [];
+        history.push({ role: "user", content: text });
+        history.push({ role: "assistant", content: contentText });
+        conversationDataEl.value = JSON.stringify(history, null, 2);
+      }
+
+      return { data, contentText };
+    }
+
+    function setLoading(isLoading) {
+      if (runBtn) {
+        runBtn.disabled = isLoading;
+        runBtn.textContent = isLoading ? "Running..." : runBtnDefaultText;
+      }
+      if (quickRunBtn) {
+        quickRunBtn.disabled = isLoading;
+        quickRunBtn.textContent = isLoading ? "Running..." : quickRunDefaultText;
+      }
+      if (loadingEl) {
+        loadingEl.classList.toggle("active", isLoading);
+      }
+    }
+
+    document.getElementById("loginBtn").onclick = async () => {
+      const value = prompt("Enter your API key:", getKey()) || "";
+      setKey(value.trim());
+      await refreshStatus();
+    };
+
+    document.getElementById("clearBtn").onclick = () => {
+      setKey("");
+      refreshStatus();
+    };
+
+    document.getElementById("saveProjectBtn").onclick = () => {
+      const value = document.getElementById("projectInput").value.trim();
+      setProject(value);
+    };
+
+    async function runPrompt() {
+      setLoading(true);
+      try {
+        const result = await callAi();
+        if (!result) return;
+        const { data, contentText } = result;
+        outEl.textContent = JSON.stringify(data, null, 2);
+        lastOutEl.textContent = contentText;
+      } catch (err) {
+        outEl.textContent = String(err.message || err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (runBtn) {
+      runBtn.onclick = runPrompt;
+    }
+
+    if (quickRunBtn) {
+      quickRunBtn.onclick = runPrompt;
+    }
+
+    document.getElementById("clearBtn2").onclick = () => {
+      outEl.textContent = "";
+      if (requestOutEl) requestOutEl.textContent = "";
+      lastOutEl.textContent = "";
+    };
+
+    document.getElementById("runSample").onclick = () => {
+      promptEl.value = "Selling OU tickets, DM me at 555-1234";
+      systemMessageEl.value =
+        "Classify the message as spam (Yes) or not spam (No).";
+      if (conversationDataEl) {
+        conversationDataEl.value = JSON.stringify(
           [
             {
               role: "user",
@@ -416,14 +456,16 @@
           null,
           2
         );
-        document.getElementById("trainStart").value = "Training examples:";
-        document.getElementById("trainEnd").value = "Classify the next message.";
-        document.getElementById("thinkToggle").checked = false;
-        document.getElementById("runBtn").click();
-      };
+      }
+      trainStartEl.value = "Training examples:";
+      trainEndEl.value = "Classify the next message.";
+      thinkToggleEl.checked = false;
+      runBtn.click();
+    };
 
-      document.getElementById("projectInput").value = getProject();
-      refreshStatus();
-    </script>
-  </body>
+    document.getElementById("projectInput").value = getProject();
+    refreshStatus();
+  </script>
+</body>
+
 </html>
