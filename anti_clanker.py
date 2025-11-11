@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os
 import subprocess
-import sys
 import time
 from fastapi import FastAPI, Request
 from fastapi import HTTPException, Depends
@@ -26,9 +25,6 @@ from sec.security_helpers import (
     remove_api_key,
 )
 
-doBans = True  # Set to True to ban users after max strikes, False to only remove them
-WARN_STRIKES = 1  # delete message on first strike, remove on second
-WAIT = 30  # seconds to wait before checking subgroups for spam
 SYSTEM_MESSAGE = (
     "You are a strict binary classifier for messages in the UT Austin Pickleball Club GroupMe.\n"
     "Task: Determine if a message is spam relevant to the group. Output exactly one word: Yes or No. No punctuation, no explanations.\n\n"
@@ -284,6 +280,20 @@ async def callback(request: Request):
                     gm.post_bot_message(f"'{name}' is already in the ignore list or invalid.")
                     log_and_print(f"🚫 '{name}' is already in ignore list or invalid.", flush=True)
                     return {"status": "ignored_exists", "user": name}
+                
+        if "@ban" in lower_text:
+            name = lower_text[lower_text.find(" ") + 1:lower_text.rfind(" ")]
+            if name:
+                banned_id = gm.get_member_id(name)
+                gm.ban(banned_id)
+                if banned_id:
+                    gm.post_bot_message(f"Banned user '{name}'.")
+                    log_and_print(f"🚫 Banned user '{name}'.", flush=True)
+                    return {"status": "banned", "user": name}
+                else:
+                    gm.post_bot_message(f"User '{name}' not found or already banned.")
+                    log_and_print(f"🚫 User '{name}' not found or already banned.", flush=True)
+                    return {"status": "ban_failed", "user": name}
 
     if name.lower() in gm.ignored:
         log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.", flush=True)
@@ -295,7 +305,7 @@ async def callback(request: Request):
 
     gm.reckon(name, user_id, text, message_id)
 
-    Thread(target=gm.subgroup_reckon_worker, args=(name, user_id, WAIT, contains_banned), daemon=True).start()
+    Thread(target=gm.subgroup_reckon_worker, args=(name, user_id, contains_banned), daemon=True).start()
 
     return {"status": "processed"}
 
@@ -386,6 +396,7 @@ async def admin_list_keys(request: Request):
             "role": entry.get("role", "user"),
             "created_at": entry.get("created_at"),
             "notes": entry.get("notes"),
+            "last_used": entry.get("last_used"),
         }
     return {"keys": preview}
 

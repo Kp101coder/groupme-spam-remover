@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 from fastapi import HTTPException, Request, Depends
@@ -35,6 +36,33 @@ def verify_secret_against_entry(secret: str, entry: Dict[str, Any]) -> bool:
     return verify_secret(secret, stored)
 
 
+def _record_key_usage(name: str, entry_snapshot: Dict[str, Any]) -> None:
+    """Persist last_used timestamp for the given API key."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    if API_KEYS_FILE.exists():
+        try:
+            data = json.loads(API_KEYS_FILE.read_text())
+            keys_list = data.get("api_keys") if isinstance(data.get("api_keys"), list) else []
+            updated = False
+            for item in keys_list:
+                if isinstance(item, dict) and item.get("name") == name:
+                    item["last_used"] = timestamp
+                    updated = True
+                    break
+            if updated:
+                data["api_keys"] = keys_list
+                API_KEYS_FILE.write_text(json.dumps(data, indent=2))
+        except Exception:
+            # If persisting fails we still continue, auth should not break
+            pass
+
+    merged = dict(entry_snapshot or {})
+    merged["last_used"] = timestamp
+    global API_KEYS
+    API_KEYS[name] = merged
+
+
 def require_api_key(api_key: str = Depends(api_key_header)) -> Dict[str, Any]:
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API Key")
@@ -46,10 +74,13 @@ def require_api_key(api_key: str = Depends(api_key_header)) -> Dict[str, Any]:
     for name, entry in API_KEYS.items():
         try:
             if verify_secret_against_entry(api_key, entry):
+                _record_key_usage(name, entry)
+                current_entry = API_KEYS.get(name, entry)
                 return {
                     "name": name,
-                    "role": entry.get("role", "user"),
-                    "projects": entry.get("projects", []),
+                    "role": current_entry.get("role", "user"),
+                    "projects": current_entry.get("projects", []),
+                    "last_used": current_entry.get("last_used"),
                 }
         except Exception:
             continue

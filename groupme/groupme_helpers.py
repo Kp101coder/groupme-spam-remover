@@ -37,6 +37,10 @@ conversations = _load_file(CONVERSATIONS_FILE)
 banned = _load_file(BANNED_FILE).get("banned", [])
 admin = _load_file(ADMIN_FILE).get("admins", [])
 last_action = None
+doBans = True  # Set to True to ban users after max strikes, False to only remove them
+WARN_STRIKES = 1  # delete message on first strike, remove on second
+WAIT_REQUESTS = 300  # seconds to wait before checking for new member requests
+WAIT_SUBGROUPS = 30  # seconds to wait before checking subgroups for spam
 
 def add_to_ignored(name: str) -> bool:
     """Add a full name to ignored.json and in-memory cache. Returns True if added, False if already present or invalid."""
@@ -54,7 +58,6 @@ def add_to_ignored(name: str) -> bool:
 
     return True
 
-
 def get_membership_id(user_id):
     url = f"{BASE}/groups/{GROUP_ID}"
     r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
@@ -64,24 +67,34 @@ def get_membership_id(user_id):
             return m.get("id"), m
     return None, None
 
+def get_member_id(name):
+    '''Retrieve a member's user ID by their name or nickname.'''
+    # GET /groups/:group_id/members
+    url = f"{BASE}/groups/{GROUP_ID}/members"
+    r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
+    if r.status_code == 200:
+        members = r.json().get("memberships", [])
+        for m in members:
+            if m.get("name", "").lower() == name.lower():
+                return m.get("user_id")
+            elif m.get("nickname", "").lower() == name.lower():
+                return m.get("user_id")
+    return None
 
 def remove_member(membership_id):
     url = f"{BASE}/groups/{GROUP_ID}/members/{membership_id}/remove"
     r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
-
 def delete_message(message_id):
     url = f"{BASE}/conversations/{GROUP_ID}/messages/{message_id}"
     r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code
 
-
 def post_bot_message(text):
     url = f"{BASE}/bots/post"
     payload = {"bot_id": BOT_AUTH_ID, "text": text}
     requests.post(url, json=payload, timeout=10)
-
 
 def get_subgroups():
     url = f"{BASE}/groups/{GROUP_ID}/subgroups"
@@ -90,14 +103,12 @@ def get_subgroups():
         return r.json().get("response", [])
     return []
 
-
 def get_subgroup_details(subgroup_id):
     url = f"{BASE}/groups/{GROUP_ID}/subgroups/{subgroup_id}"
     r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)
     if r.status_code == 200:
         return r.json().get("response", {})
     return {}
-
 
 def like_message(message_id):
     url = f"{BASE}/messages/{GROUP_ID}/{message_id}/like"
@@ -107,12 +118,10 @@ def like_message(message_id):
     r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
 
-
 def ban(membership_id):
     url = f"{BASE}/groups/{GROUP_ID}/memberships/{membership_id}/destroy"
     r = requests.post(url, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 200
-
 
 def send_dm(user_id, text):
     unique_guid = str(__import__("uuid").uuid4())
@@ -127,12 +136,10 @@ def send_dm(user_id, text):
     r = requests.post(url, json=payload, params={"token": ACCESS_TOKEN}, timeout=10)
     return r.status_code == 201
 
-
 def get_user_conversation(user_id) -> list:
     if str(user_id) not in conversations:
         conversations[str(user_id)] = []
     return conversations[str(user_id)]
-
 
 def add_to_conversation(user_id, role, content):
     convo = get_user_conversation(user_id)
@@ -141,7 +148,6 @@ def add_to_conversation(user_id, role, content):
         conversations[str(user_id)] = convo[-20:]
     _save_file(conversations, CONVERSATIONS_FILE)
     return convo
-
 
 def thanos(name, user_id, text, prompt_fn):
     """Runs the Thanos persona flow. 'prompt_fn' must be passed (from ai_helpers)
@@ -169,7 +175,6 @@ def thanos(name, user_id, text, prompt_fn):
         post_bot_message(f"@{name}, I am... inevitable. But my words fail me at this moment.")
         return {"status": "bot_mentioned_error"}
 
-
 def undo_last_action():
     global last_action
     if not last_action:
@@ -187,15 +192,14 @@ def undo_last_action():
             _save_file({"banned": banned}, BANNED_FILE)
         post_bot_message(f"@{name} soul has been restored with the soul stone, they are eligible to rejoin.")
 
-
 def reckon(name, user_id, text, message_id):
     global last_action
     strikes[user_id] = strikes.get(user_id, 0) + 1
     _save_file(strikes, STRIKES_FILE)
-    if strikes[user_id] <= 1:
+    if not doBans or strikes[user_id] <= WARN_STRIKES:
         send_dm(user_id, f"@{name}, warning: spam detected, issuing reckoning {strikes[user_id]} for {text} in {message_id}.")
         last_action = {"action": "strike", "user": name, "user_id": user_id}
-    else:
+    elif doBans:
         membership_id, _ = get_membership_id(user_id)
         last_action = {"action": "remove", "user": name, "user_id": user_id}
         if membership_id and remove_member(membership_id):
@@ -210,12 +214,12 @@ def reckon(name, user_id, text, message_id):
                 _save_file({"banned": banned}, BANNED_FILE)
 
 def subgroup_reckon_worker(name, user_id, contains_banned_fn=None):
+    sleep(WAIT_SUBGROUPS)
     subgroups = get_subgroups()
     for subgroup in subgroups:
         last_message = subgroup.get("messages", {}).get("preview", {}).get("text", "")
         if contains_banned_fn and contains_banned_fn(last_message):
             reckon(name, user_id, last_message, subgroup.get("messages", {}).get("last_message_id"))
-
 
 def accept_invites():
     '''
@@ -223,7 +227,7 @@ def accept_invites():
     '''
     while True:
         try:
-            sleep(300)  # Wait 5 minutes
+            sleep(WAIT_REQUESTS)  # Wait 5 minutes
             print("⏳ Checking for pending membership requests...", flush=True)
             url = f"{BASE}/groups/{GROUP_ID}/pending_memberships"
             r = requests.get(url, params={"token": ACCESS_TOKEN}, timeout=10)

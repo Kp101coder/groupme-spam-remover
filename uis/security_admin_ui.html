@@ -259,6 +259,16 @@
         const created = new Date(info.created_at).toLocaleString();
         lines.push(`<small>Created: ${created}</small>`);
       }
+      const lastUsedRaw = info.last_used;
+      if (lastUsedRaw) {
+        const parsed = new Date(lastUsedRaw);
+        const formatted = Number.isNaN(parsed.getTime())
+          ? lastUsedRaw
+          : parsed.toLocaleString();
+        lines.push(`<small>Last used: ${formatted}</small>`);
+      } else {
+        lines.push(`<small>Last used: never</small>`);
+      }
       if (info.notes) {
         lines.push(`<small>Notes: ${info.notes}</small>`);
       }
