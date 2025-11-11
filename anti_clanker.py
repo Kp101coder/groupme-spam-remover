@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 from typing import Any, Dict, List
+import os
 import subprocess
+import sys
+import time
 from fastapi import FastAPI, Request
 from fastapi import HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse
@@ -89,6 +92,17 @@ ALLOWED_PATHS = {
 }
 
 STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg")
+
+
+def schedule_process_reload(delay: float = 1.0) -> None:
+    """Restart the current process after a short delay."""
+
+    def _restart() -> None:
+        time.sleep(max(delay, 0.0))
+        log_and_print("♻️ Reloading server process...")
+        os._exit(0)
+
+    Thread(target=_restart, daemon=True).start()
 
 def _parse_projects(value: Any) -> List[str]:
     """Return unique project slugs from strings or iterables."""
@@ -461,6 +475,13 @@ async def admin_git_pull(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Git command failed: {e}")
     return {"fetch": res.stdout + res.stderr, "pull": res2.stdout + res2.stderr}
+
+
+@app.post("/admin/server/reload")
+async def admin_reload_server(request: Request):
+    require_admin_header(request)
+    schedule_process_reload()
+    return {"status": "reloading"}
 
 # Entry point
 if __name__ == "__main__":

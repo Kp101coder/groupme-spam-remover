@@ -164,6 +164,8 @@
         <h2>Admin</h2>
         <div class="actions">
           <button class="btn" id="loginBtn">Login</button>
+          <button class="btn" id="logoutBtn">Logout</button>
+          <button class="btn" id="reloadBtn">Reload</button>
         </div>
       </header>
       <div class="lists-grid">
@@ -206,9 +208,17 @@
           <button class="btn" id="pullModel">Pull</button>
           <button class="btn" id="deleteModel">Delete</button>
           <button class="btn" id="switchModel">Switch</button>
-          <button class="btn" id="gitPull">Git Pull</button>
         </div>
         <pre id="modelOut"></pre>
+      </section>
+
+      <section class="section">
+        <h3>Maintenance</h3>
+        <div class="actions">
+          <button class="btn" id="gitPull">Git Pull</button>
+          <button class="btn" id="reloadServer">Reload Server</button>
+        </div>
+        <pre id="maintenanceOut"></pre>
       </section>
     </main>
   </div>
@@ -259,6 +269,9 @@
     }
 
     async function refreshAll() {
+      if (!adminKey) {
+        return;
+      }
       try {
         const [keys, models] = await Promise.all([
           callApi("/admin/list-keys"),
@@ -293,14 +306,46 @@
       }
     }
 
+    function clearUi() {
+      document.getElementById("keysList").innerHTML = "";
+      document.getElementById("modelsList").innerHTML = "";
+      document.getElementById("createOut").textContent = "";
+      document.getElementById("revokeOut").textContent = "";
+      document.getElementById("modelOut").textContent = "";
+      document.getElementById("maintenanceOut").textContent = "";
+    }
+
+    function updateAuthButtons() {
+      const loggedIn = Boolean(adminKey);
+      document.getElementById("logoutBtn").disabled = !loggedIn;
+      document.getElementById("reloadBtn").disabled = !loggedIn;
+      document.getElementById("createKeyBtn").disabled = !loggedIn;
+      document.getElementById("revokeBtn").disabled = !loggedIn;
+      document.getElementById("pullModel").disabled = !loggedIn;
+      document.getElementById("deleteModel").disabled = !loggedIn;
+      document.getElementById("switchModel").disabled = !loggedIn;
+      document.getElementById("gitPull").disabled = !loggedIn;
+      document.getElementById("reloadServer").disabled = !loggedIn;
+    }
+
     document.getElementById("loginBtn").onclick = async () => {
       const value = prompt("Enter admin key:", adminKey) || "";
       setAdminKey(value.trim());
+      updateAuthButtons();
       if (!adminKey) {
-        document.getElementById("keysList").innerHTML = "";
-        document.getElementById("modelsList").innerHTML = "";
+        clearUi();
         return;
       }
+      await refreshAll();
+    };
+
+    document.getElementById("logoutBtn").onclick = () => {
+      setAdminKey("");
+      updateAuthButtons();
+      clearUi();
+    };
+
+    document.getElementById("reloadBtn").onclick = async () => {
       await refreshAll();
     };
 
@@ -359,11 +404,11 @@
 
     async function handleModelAction(path) {
       const name = document.getElementById("modelName").value.trim();
-      if (!name && path !== "/admin/git-pull") {
+      if (!name) {
         alert("Model name is required");
         return;
       }
-      const payload = path === "/admin/git-pull" ? {} : { model: name };
+      const payload = { model: name };
       try {
         const res = await callApi(path, {
           method: "POST",
@@ -389,11 +434,36 @@
       handleModelAction("/admin/models/delete");
     document.getElementById("switchModel").onclick = () =>
       handleModelAction("/admin/models/switch");
+
+    async function handleMaintenanceAction(path) {
+      try {
+        const res = await callApi(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        document.getElementById("maintenanceOut").textContent = JSON.stringify(
+          res,
+          null,
+          2
+        );
+        if (path === "/admin/git-pull") {
+          await refreshAll();
+        }
+      } catch (err) {
+        document.getElementById("maintenanceOut").textContent = String(err);
+      }
+    }
+
     document.getElementById("gitPull").onclick = () =>
-      handleModelAction("/admin/git-pull");
+      handleMaintenanceAction("/admin/git-pull");
+    document.getElementById("reloadServer").onclick = () =>
+      handleMaintenanceAction("/admin/server/reload");
 
     if (adminKey) {
+      updateAuthButtons();
       refreshAll();
+    } else {
+      updateAuthButtons();
     }
   </script>
 </body>
