@@ -145,7 +145,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
     }
 
     .input-inline {
@@ -234,16 +234,14 @@
         <div class="actions">
           <button class="btn" id="gitPull">Git Pull</button>
         </div>
-        <div class="actions">
-          <div class="inline-input-group">
-            <input id="reloadDelayValue" class="input input-inline" type="number" min="0" step="0.1" value="1" />
-            <select id="reloadDelayUnit" class="select select-inline">
-              <option value="seconds">Seconds</option>
-              <option value="minutes">Minutes</option>
-              <option value="hours">Hours</option>
-              <option value="days">Days</option>
-            </select>
-          </div>
+        <div class="inline-input-group">
+          <input id="reloadDelayValue" class="input input-inline" type="number" min="0" step="0.1" value="1" />
+          <select id="reloadDelayUnit" class="select select-inline">
+            <option value="seconds">Seconds</option>
+            <option value="minutes">Minutes</option>
+            <option value="hours">Hours</option>
+            <option value="days">Days</option>
+          </select>
           <button class="btn" id="reloadServer">Reload Server</button>
         </div>
         <pre id="maintenanceOut"></pre>
@@ -480,7 +478,12 @@
       if (path === "/admin/server/reload") {
         const valueInput = document.getElementById("reloadDelayValue");
         const unitSelect = document.getElementById("reloadDelayUnit");
-        const rawValue = Number(valueInput.value);
+        const rawValueStr = valueInput.value.trim();
+        if (!rawValueStr) {
+          alert("Delay value is required");
+          return;
+        }
+        const rawValue = Number(rawValueStr);
         if (!Number.isFinite(rawValue) || rawValue < 0) {
           alert("Delay must be a non-negative number");
           return;
