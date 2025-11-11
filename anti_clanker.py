@@ -487,12 +487,28 @@ async def admin_git_pull(request: Request):
         raise HTTPException(status_code=500, detail=f"Git command failed: {e}")
     return {"fetch": res.stdout + res.stderr, "pull": res2.stdout + res2.stderr}
 
-
 @app.post("/admin/server/reload")
 async def admin_reload_server(request: Request):
     require_admin_header(request)
-    schedule_process_reload()
-    return {"status": "reloading"}
+    delay_seconds = 1.0
+    try:
+        data = await request.json()
+    except Exception:
+        data = None
+
+    if isinstance(data, dict):
+        raw_delay = data.get("delay_seconds")
+        if raw_delay is None:
+            raw_delay = data.get("delay")
+        if raw_delay is not None:
+            try:
+                delay_seconds = float(raw_delay)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="'delay_seconds' must be a number")
+
+    delay_seconds = max(delay_seconds, 0.0)
+    schedule_process_reload(delay_seconds)
+    return {"status": "reloading", "delay_seconds": delay_seconds}
 
 # Entry point
 if __name__ == "__main__":

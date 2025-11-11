@@ -141,6 +141,23 @@
       gap: 8px;
     }
 
+    .inline-input-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .input-inline {
+      width: 120px;
+      margin: 0;
+    }
+
+    .select-inline {
+      width: 140px;
+      margin: 0;
+    }
+
     @media (max-width: 1024px) {
       .wrap {
         flex-direction: column;
@@ -216,6 +233,17 @@
         <h3>Maintenance</h3>
         <div class="actions">
           <button class="btn" id="gitPull">Git Pull</button>
+        </div>
+        <div class="actions">
+          <div class="inline-input-group">
+            <input id="reloadDelayValue" class="input input-inline" type="number" min="0" step="0.1" value="1" />
+            <select id="reloadDelayUnit" class="select select-inline">
+              <option value="seconds">Seconds</option>
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+            </select>
+          </div>
           <button class="btn" id="reloadServer">Reload Server</button>
         </div>
         <pre id="maintenanceOut"></pre>
@@ -336,6 +364,8 @@
       document.getElementById("switchModel").disabled = !loggedIn;
       document.getElementById("gitPull").disabled = !loggedIn;
       document.getElementById("reloadServer").disabled = !loggedIn;
+      document.getElementById("reloadDelayValue").disabled = !loggedIn;
+      document.getElementById("reloadDelayUnit").disabled = !loggedIn;
     }
 
     document.getElementById("loginBtn").onclick = async () => {
@@ -446,11 +476,33 @@
       handleModelAction("/admin/models/switch");
 
     async function handleMaintenanceAction(path) {
+      let payload;
+      if (path === "/admin/server/reload") {
+        const valueInput = document.getElementById("reloadDelayValue");
+        const unitSelect = document.getElementById("reloadDelayUnit");
+        const rawValue = Number(valueInput.value);
+        if (!Number.isFinite(rawValue) || rawValue < 0) {
+          alert("Delay must be a non-negative number");
+          return;
+        }
+        const multipliers = {
+          seconds: 1,
+          minutes: 60,
+          hours: 3600,
+          days: 86400,
+        };
+        const unit = unitSelect.value;
+        const multiplier = multipliers[unit] || 1;
+        const delaySeconds = rawValue * multiplier;
+        payload = { delay_seconds: delaySeconds };
+      }
       try {
-        const res = await callApi(path, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
+        const options = { method: "POST" };
+        if (payload !== undefined) {
+          options.headers = { "Content-Type": "application/json" };
+          options.body = JSON.stringify(payload);
+        }
+        const res = await callApi(path, options);
         document.getElementById("maintenanceOut").textContent = JSON.stringify(
           res,
           null,
