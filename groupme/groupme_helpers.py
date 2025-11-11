@@ -250,7 +250,7 @@ def accept_invites():
                         if r2.status_code == 200:
                             log_and_print(f"Accepted membership for {nickname} ({user_id})")
             else:
-                log_and_print(f"Failed to get pending memberships: {r.status_code}")
+                log_and_print(f"Failed to get pending memberships: {r.status_code}", level="error")
         except Exception as e:
             log_and_print(f"Error in accept_invites: {e}")
 

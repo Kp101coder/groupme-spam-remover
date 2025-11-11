@@ -297,7 +297,7 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
 
     caller = identity.get("name", "unknown")
     project = getattr(request.state, "project", None)
-    logger.info("/ai invoked by %s project=%s", caller, project or "*")
+    log_and_print(f"/ai invoked by {caller} project={project or '*'}")
 
     system_message = payload.get("system_message", None)
     data_list = payload.get("data", None)
@@ -341,7 +341,7 @@ async def admin_generate_key(request: Request):
     global API_KEYS
     stored_entry = {k: v for k, v in stored.items() if k != "name"}
     API_KEYS[name] = stored_entry
-    logger.info(f"Created API key for name={name}")
+    log_and_print(f"Created API key for name={name}")
     # Return plaintext secret once
     stored_response = {k: v for k, v in stored.items() if k != "hash"}
     stored_response["secret"] = secret
@@ -382,7 +382,7 @@ async def admin_revoke_key(request: Request):
     if removed:
         global API_KEYS
         API_KEYS.pop(name_to_revoke, None)
-        logger.info(f"Revoked API key name={name_to_revoke}")
+        log_and_print(f"Revoked API key name={name_to_revoke}")
         return {"status": "revoked", "name": name_to_revoke}
     else:
         raise HTTPException(status_code=404, detail="Key name not found")
