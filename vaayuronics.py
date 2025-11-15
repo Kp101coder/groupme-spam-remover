@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os
 import subprocess
+import sys
+import traceback
 from logs.logsys import log_and_print, LOG_FILE
 import time
 from fastapi import FastAPI, Request
@@ -44,6 +46,25 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 admins = {a.lower() for a in gm.admin if isinstance(a, str)}
 API_KEYS: Dict[str, Dict[str, Any]] = API_KEYS
 
+# Set up global exception handler using sys.excepthook
+_original_excepthook = sys.excepthook
+
+def custom_excepthook(exc_type, exc_value, exc_traceback):
+    """Log uncaught exceptions before calling the original handler."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        # Don't log keyboard interrupts
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+    tb_text = "".join(tb_lines)
+    log_and_print(f"❌ Uncaught exception: {exc_type.__name__}: {exc_value}\n{tb_text}")
+    
+    # Call original handler
+    _original_excepthook(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = custom_excepthook
+
 # Middleware to require API key for all routes except a small whitelist
 ALLOWED_PATHS = {
     "/",
@@ -57,6 +78,17 @@ ALLOWED_PATHS = {
 }
 
 STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg")
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
 
 
 def _tail_lines(path: Path, max_lines: int = 200) -> List[str]:
@@ -148,30 +180,40 @@ async def enforce_api_key_middleware(request: Request, call_next) -> Any:
 
 @app.post('/auth/login')
 async def auth_login(request: Request):
+    client_ip = _get_client_ip(request)
     data = await request.json()
     secret = data.get('key')
     if not secret:
+        log_and_print(f"⚠️ /auth/login failed: missing key from {client_ip}")
         raise HTTPException(status_code=400, detail="'key' required")
     try:
         identity = require_api_key(secret)
     except HTTPException:
+        log_and_print(f"🔒 /auth/login failed: invalid key from {client_ip}")
         raise HTTPException(status_code=403, detail="Invalid key")
 
     response = {"status": "ok", "name": identity.get("name"), "role": identity.get("role", "user")}
     if identity.get("projects"):
         response["projects"] = identity["projects"]
+    log_and_print(f"✅ /auth/login successful for {identity.get('name')} (role: {identity.get('role', 'user')}) from {client_ip}")
     return response
 
 @app.get('/')
-async def serve_index():
+async def serve_index(request: Request):
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📄 Serving index page to {client_ip}")
     return FileResponse('uis/index.html')
 
 @app.get('/admin_ui')
-async def serve_admin_ui():
+async def serve_admin_ui(request: Request):
+    client_ip = _get_client_ip(request)
+    log_and_print(f"🔧 Serving admin UI to {client_ip}")
     return FileResponse('uis/security_admin_ui.html')
 
 @app.get('/user_ui')
-async def serve_user_ui():
+async def serve_user_ui(request: Request):
+    client_ip = _get_client_ip(request)
+    log_and_print(f"👤 Serving user UI to {client_ip}")
     return FileResponse('uis/security_user_ui.html')
 
 def normalize_text(text: str):
@@ -213,8 +255,10 @@ def contains_banned(text: str):
     return "yes" in answer and "no" not in answer
 
 @app.get("/status")
-async def status(_: Request):
+async def status(request: Request):
     """Lightweight status endpoint for uptime checks."""
+    client_ip = _get_client_ip(request)
+    log_and_print(f"💓 Status check received from {client_ip}")
     return {
         "status": "ok",
         "service": "groupme-spam-remover",
@@ -224,10 +268,11 @@ async def status(_: Request):
 
 @app.post("/kill-da-clanker")
 async def callback(request: Request):
+    client_ip = _get_client_ip(request)
     payload = await request.json()
     user_id = payload.get("user_id")
 
-    # Ignore bot’s own messages
+    # Ignore bot's own messages
     if user_id == "0" or user_id == str(gm.BOT_ID):
         return {"status": "ignored"}
 
@@ -235,7 +280,7 @@ async def callback(request: Request):
     text = payload.get("text", "")
     message_id = payload.get("id")
 
-    log_and_print(f"📩 Message from {name}/{user_id}: '{text}'")
+    log_and_print(f"📩 Message from {name}/{user_id} (IP: {client_ip}): '{text}'")
 
     if "@thanos" in text.lower():
         # Use groupme helper's Thanos flow and pass ai.prompt as the prompt function
@@ -309,7 +354,8 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
 
     caller = identity.get("name", "unknown")
     project = getattr(request.state, "project", None)
-    log_and_print(f"/ai invoked by {caller} project={project or '*'}")
+    client_ip = _get_client_ip(request)
+    log_and_print(f"🤖 /ai invoked by {caller} project={project or '*'} from {client_ip}")
 
     system_message = payload.get("system_message", None)
     data_list = payload.get("data", None)
@@ -320,7 +366,9 @@ async def ai_endpoint(request: Request, identity: Dict[str, Any] = Depends(requi
     # Call prompt
     result = ai.prompt(text, system_message, data_list, train_start, train_end, think)
     if not result:
+        log_and_print(f"❌ /ai failed for {caller} from {client_ip}: model error or unavailable")
         raise HTTPException(status_code=500, detail="Model error or unavailable")
+    log_and_print(f"✅ /ai successful for {caller} (project: {project or '*'}) from {client_ip}")
     if isinstance(result, dict):
         return result
     return {"model": ai.MODEL, "content": str(result)}
@@ -330,10 +378,12 @@ async def admin_generate_key(request: Request):
     """Generate a new API key and persist it. Requires admin header defined in admin.key."""
     # Validate admin header using central helper
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
 
     data = await request.json()
     name = data.get('name')
     if not name:
+        log_and_print(f"⚠️ /admin/generate-key failed: missing name from {client_ip}")
         raise HTTPException(status_code=400, detail="'name' is required to create a key")
     projects = _parse_projects(data.get("projects"))
     notes = data.get("notes")
@@ -348,12 +398,13 @@ async def admin_generate_key(request: Request):
         from sec.security_helpers import persist_named_key as sh_persist_named_key
         stored = sh_persist_named_key(name, secret, API_KEYS_FILE, metadata)
     except Exception as e:
+        log_and_print(f"❌ /admin/generate-key failed for name={name} from {client_ip}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to persist new key: {e}")
     # Update local cache without re-importing
     global API_KEYS
     stored_entry = {k: v for k, v in stored.items() if k != "name"}
     API_KEYS[name] = stored_entry
-    log_and_print(f"Created API key for name={name}")
+    log_and_print(f"✅ /admin/generate-key successful: created API key for name={name} (role: {role}) from {client_ip}")
     # Return plaintext secret once
     stored_response = {k: v for k, v in stored.items() if k != "hash"}
     stored_response["secret"] = secret
@@ -362,6 +413,8 @@ async def admin_generate_key(request: Request):
 @app.get("/admin/list-keys")
 async def admin_list_keys(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📋 /admin/list-keys requested from {client_ip}")
     # Return list of names with metadata for identification
     preview: Dict[str, Dict[str, Any]] = {}
     for name, entry in API_KEYS.items():
@@ -384,88 +437,119 @@ async def admin_list_keys(request: Request):
 @app.post("/admin/revoke-key")
 async def admin_revoke_key(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
 
     data = await request.json()
     name_to_revoke = data.get("name")
     if not name_to_revoke:
+        log_and_print(f"⚠️ /admin/revoke-key failed: missing name from {client_ip}")
         raise HTTPException(status_code=400, detail="'name' is required in body")
 
     removed = remove_api_key(name_to_revoke, API_KEYS_FILE)
     if removed:
         global API_KEYS
         API_KEYS.pop(name_to_revoke, None)
-        log_and_print(f"Revoked API key name={name_to_revoke}")
+        log_and_print(f"✅ /admin/revoke-key successful: revoked API key name={name_to_revoke} from {client_ip}")
         return {"status": "revoked", "name": name_to_revoke}
     else:
+        log_and_print(f"❌ /admin/revoke-key failed: key name={name_to_revoke} not found (from {client_ip})")
         raise HTTPException(status_code=404, detail="Key name not found")
 
 @app.get("/admin/ui")
 async def admin_ui(request: Request):
     """Serve a simple admin UI for listing, creating, and revoking keys, and testing model."""
+    client_ip = _get_client_ip(request)
+    log_and_print(f"🔧 Serving /admin/ui to {client_ip}")
     return FileResponse("uis/security_admin_ui.html")
 
 @app.get("/ui")
 async def user_ui(request: Request):
     """Serve a simple user UI that calls the /ai endpoint."""
+    client_ip = _get_client_ip(request)
+    log_and_print(f"👤 Serving /ui to {client_ip}")
     return FileResponse("uis/security_user_ui.html")
 
 @app.post("/admin/models/list")
 async def admin_list_models(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📋 /admin/models/list requested from {client_ip}")
     models = ai.list_models()
+    model_count = len(models.get('models', [])) if isinstance(models, dict) else 'unknown'
+    log_and_print(f"✅ /admin/models/list successful: {model_count} models found (from {client_ip})")
     return {"models": models}
 
 @app.post("/admin/models/pull")
 async def admin_pull_model(request: Request):
     """Pull a model by name (body: {"model": "name"})."""
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
     data = await request.json()
     model_name = data.get("model")
     if not model_name:
+        log_and_print(f"⚠️ /admin/models/pull failed: missing model name from {client_ip}")
         raise HTTPException(status_code=400, detail="'model' is required")
+    log_and_print(f"📥 /admin/models/pull: pulling model {model_name} (from {client_ip})")
     try:
         ai.pull_model_name(model_name)
     except Exception as e:
+        log_and_print(f"❌ /admin/models/pull failed for {model_name} from {client_ip}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to pull model: {e}")
+    log_and_print(f"✅ /admin/models/pull successful: pulled model {model_name} (from {client_ip})")
     return {"status": "pulled", "model": model_name}
 
 @app.post("/admin/models/delete")
 async def admin_delete_model(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
     data = await request.json()
     model_name = data.get("model")
     if not model_name:
+        log_and_print(f"⚠️ /admin/models/delete failed: missing model name from {client_ip}")
         raise HTTPException(status_code=400, detail="'model' is required")
+    log_and_print(f"🗑️ /admin/models/delete: deleting model {model_name} (from {client_ip})")
     try:
         ai.remove_model(model_name)
     except Exception as e:
+        log_and_print(f"❌ /admin/models/delete failed for {model_name} from {client_ip}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
+    log_and_print(f"✅ /admin/models/delete successful: deleted model {model_name} (from {client_ip})")
     return {"status": "deleted", "model": model_name}
 
 @app.post("/admin/models/switch")
 async def admin_switch_model(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
     data = await request.json()
     model_name = data.get("model")
     if not model_name:
+        log_and_print(f"⚠️ /admin/models/switch failed: missing model name from {client_ip}")
         raise HTTPException(status_code=400, detail="'model' is required")
+    log_and_print(f"🔄 /admin/models/switch: switching to model {model_name} (from {client_ip})")
     # Change model inside ai_helpers
     try:
         active_model = ai.set_model(model_name)
     except ValueError as exc:
+        log_and_print(f"❌ /admin/models/switch failed for {model_name} from {client_ip}: {exc}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        log_and_print(f"❌ /admin/models/switch failed for {model_name} from {client_ip}: {exc}")
         raise HTTPException(status_code=500, detail=f"Failed to switch model: {exc}") from exc
+    log_and_print(f"✅ /admin/models/switch successful: switched to model {active_model} (from {client_ip})")
     return {"status": "switched", "model": active_model}
 
 @app.post("/admin/git-pull")
 async def admin_git_pull(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📥 /admin/git-pull: executing git fetch and pull (from {client_ip})")
     try:
         res = subprocess.run(["git", "fetch", "--all"], cwd=str(Path('.').absolute()), capture_output=True, text=True)
         res2 = subprocess.run(["git", "pull"], cwd=str(Path('.').absolute()), capture_output=True, text=True)
     except Exception as e:
+        log_and_print(f"❌ /admin/git-pull failed from {client_ip}: {e}")
         raise HTTPException(status_code=500, detail=f"Git command failed: {e}")
+    log_and_print(f"✅ /admin/git-pull successful (from {client_ip})")
     return {"fetch": res.stdout + res.stderr, "pull": res2.stdout + res2.stderr}
 
 
@@ -473,9 +557,12 @@ async def admin_git_pull(request: Request):
 async def admin_current_log(request: Request, limit: int = 200):
     """Return tail of current log file via query param (backwards compatible)."""
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📜 /admin/logs/current requested (limit: {limit}) from {client_ip}")
     try:
         max_lines = int(limit)
     except (TypeError, ValueError):
+        log_and_print(f"⚠️ /admin/logs/current failed: invalid limit parameter from {client_ip}")
         raise HTTPException(status_code=400, detail="'limit' must be an integer")
     max_lines = max(1, min(max_lines, 2000))
     lines = _tail_lines(LOG_FILE, max_lines)
@@ -489,6 +576,7 @@ async def admin_refresh_log(request: Request):
     This is the preferred endpoint for UI-driven refreshes.
     """
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
     try:
         data = await request.json()
     except Exception:
@@ -501,15 +589,18 @@ async def admin_refresh_log(request: Request):
             try:
                 limit = int(raw)
             except (TypeError, ValueError):
+                log_and_print(f"⚠️ /admin/logs/refresh failed: invalid limit parameter from {client_ip}")
                 raise HTTPException(status_code=400, detail="'limit' must be an integer")
 
     limit = max(1, min(limit, 2000))
     lines = _tail_lines(LOG_FILE, limit)
+    log_and_print(f"📜 /admin/logs/refresh successful (limit: {limit}, returned {len(lines)} lines) from {client_ip}")
     return {"path": str(LOG_FILE), "lines": lines}
 
 @app.post("/admin/server/reload")
 async def admin_reload_server(request: Request):
     require_admin_header(request)
+    client_ip = _get_client_ip(request)
     delay_seconds = 1.0
     try:
         data = await request.json()
@@ -524,9 +615,11 @@ async def admin_reload_server(request: Request):
             try:
                 delay_seconds = float(raw_delay)
             except (TypeError, ValueError):
+                log_and_print(f"⚠️ /admin/server/reload failed: invalid delay_seconds parameter from {client_ip}")
                 raise HTTPException(status_code=400, detail="'delay_seconds' must be a number")
 
     delay_seconds = max(delay_seconds, 0.0)
+    log_and_print(f"🔄 /admin/server/reload: scheduling server reload in {delay_seconds}s (from {client_ip})")
     schedule_process_reload(delay_seconds)
     return {"status": "reloading", "delay_seconds": delay_seconds}
 
@@ -546,4 +639,4 @@ if __name__ == "__main__":
         ai.pull_model()
     # start invite acceptor from groupme helpers
     Thread(target=gm.accept_invites, daemon=True).start()
-    uvicorn.run("anti_clanker:app", host="0.0.0.0", port=443, reload=False, ssl_keyfile='/etc/letsencrypt/live/vaayuronics.com/privkey.pem', ssl_certfile='/etc/letsencrypt/live/vaayuronics.com/fullchain.pem')
+    uvicorn.run("vaayuronics:app", host="127.0.0.1", port=8000, reload=False) #, ssl_keyfile='/etc/letsencrypt/live/vaayuronics.com/privkey.pem', ssl_certfile='/etc/letsencrypt/live/vaayuronics.com/fullchain.pem')

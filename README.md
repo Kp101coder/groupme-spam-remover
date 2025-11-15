@@ -25,7 +25,7 @@ A FastAPI service that watches GroupMe conversations and uses an Ollama-hosted L
 
 3. **Start the service.**
    ```cmd
-   uvicorn anti_clanker:app --host 0.0.0.0 --port 7110 --reload
+   uvicorn vaayuronics:app --host 0.0.0.0 --port 7110 --reload
    ```
    The webhook and UIs are now available under `http://localhost:7110/`.
 

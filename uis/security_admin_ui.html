@@ -59,6 +59,16 @@
       color: white;
       border-radius: 6px;
       cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.95);
+      box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
     }
 
     .btn:disabled {

@@ -40,7 +40,7 @@ admin = _load_file(ADMIN_FILE).get("admins", [])
 last_action = None
 doBans = True  # Set to True to ban users after max strikes, False to only remove them
 WARN_STRIKES = 1  # delete message on first strike, remove on second
-WAIT_REQUESTS = 300  # seconds to wait before checking for new member requests
+WAIT_REQUESTS = 60 * 60  # seconds to wait before checking for new member requests
 WAIT_SUBGROUPS = 30  # seconds to wait before checking subgroups for spam
 
 def add_to_ignored(name: str) -> bool:

@@ -64,7 +64,9 @@ def parse_yes_no_label(text: str) -> Optional[str]:
 
 def list_models() -> dict:
     """Return ollama list() output (dict)."""
-    return ollama_model.list()
+    data : ollama.ListResponse = ollama_model.list()
+    data_as_dict = _coerce_to_dict(data)
+    return data_as_dict
 
 
 def pull_model_name(name: str) -> None:
