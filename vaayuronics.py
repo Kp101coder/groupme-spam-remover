@@ -77,7 +77,7 @@ ALLOWED_PATHS = {
     "/status",
 }
 
-STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg")
+STATIC_EXTENSIONS = (".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg", ".mp4")
 
 
 def _get_client_ip(request: Request) -> str:
@@ -215,6 +215,12 @@ async def serve_user_ui(request: Request):
     client_ip = _get_client_ip(request)
     log_and_print(f"👤 Serving user UI to {client_ip}")
     return FileResponse('uis/security_user_ui.html')
+
+@app.get('/uis/{filename}')
+async def serve_static_file(filename: str, request: Request):
+    client_ip = _get_client_ip(request)
+    log_and_print(f"📁 Serving static file {filename} to {client_ip}")
+    return FileResponse(f'uis/{filename}')
 
 def normalize_text(text: str):
     if not text:
