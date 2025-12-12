@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not Found</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f4f4f4; overflow: hidden; }
+        .container { text-align: center; padding: 20px; background: #fff; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; z-index: 1; }
+        .force-wave {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid rgba(64, 224, 208, 0.8);
+            box-shadow: 0 0 20px rgba(64, 224, 208, 0.5);
+            opacity: 0;
+            z-index: 0;
+            animation: wave 2.5s infinite ease-out;
+        }
+        @keyframes wave {
+            0% {
+                width: 50px;
+                height: 50px;
+                opacity: 1;
+                border-width: 4px;
+            }
+            100% {
+                width: 1000px;
+                height: 1000px;
+                opacity: 0;
+                border-width: 0px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="force-wave"></div>
+    <div class="container">
+        <h1>This is not the endpoint you are looking for</h1>
+        <div class="tenor-gif-embed" data-postid="25130080" data-share-method="host" data-aspect-ratio="1.33333" data-width="100%"><a href="https://tenor.com/view/obi-wan-kenobi-5950-thisbis-gif-25130080">Obi Wan GIF</a>from <a href="https://tenor.com/search/obi-gifs">Obi GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>
+    </div>
+</body>
+</html>

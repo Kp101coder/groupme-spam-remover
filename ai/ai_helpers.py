@@ -1,16 +1,24 @@
 from typing import Any, Dict, List, Optional
 import ollama
 
-
 # Update these module-level values to customize the model or Ollama host.
 MODEL = "deepseek-r1:14b"
 OLLAMA_HOST = "http://192.168.4.212:11434"  # Required; service will fail fast if unreachable
 
-ollama_model = ollama.Client(host=OLLAMA_HOST)
+ollama_model = None
 
 def get_model() -> str:
     """Return the name of the active model."""
     return MODEL
+
+def connect() -> bool:
+    global ollama_model
+    try:
+        ollama_model = ollama.Client(host=OLLAMA_HOST)
+    except Exception as e:
+        ollama_model = None
+        return False
+    return True
 
 def get_host() -> Optional[str]:
     """Return the configured Ollama host URL or None if using the default."""

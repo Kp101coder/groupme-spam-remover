@@ -1,3 +1,4 @@
+from typing import List
 import logging
 from pathlib import Path
 
@@ -31,3 +32,14 @@ def log_and_print(msg: str, level: str = "info"):
     else:
         logger.debug(msg)
         print(msg, flush=True)
+        
+def tail_lines(max_lines: int = 200) -> List[str]:
+    if not LOG_FILE.exists():
+        return []
+    try:
+        content = LOG_FILE.read_text().splitlines()
+    except Exception:
+        return []
+    if len(content) <= max_lines:
+        return content
+    return content[-max_lines:]

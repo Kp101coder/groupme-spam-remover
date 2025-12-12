@@ -62,7 +62,6 @@ A FastAPI service that watches GroupMe conversations and uses an Ollama-hosted L
 
 ## HTTP Endpoints
 
-- `POST /kill-da-clanker`: GroupMe webhook entry point.
 - `POST /ai`: Invoke the moderation prompt manually (requires `X-API-Key`).
 - `POST /auth/login`: Validate an API key and return metadata (role, allowed projects).
 - `/admin/*`: Key management, model management, and git utilities — all require `X-API-Admin-Key`.
@@ -73,5 +72,3 @@ A FastAPI service that watches GroupMe conversations and uses an Ollama-hosted L
 - Always run behind HTTPS when exposed publicly. Terminate TLS at a reverse proxy (Caddy, Nginx, cloud load balancer) and forward to the FastAPI app.
 - Keep `sec/` contents and any Ollama model files restricted to the service account.
 - Rotate API keys regularly and remove stale entries using the admin tools.
-
-Happy moderating!
