@@ -222,7 +222,7 @@ def try_connect():
 
 # Entry point
 if __name__ == "__main__":
-    log_and_print("🚀 Starting bot server...")
+    log_and_print("🚀 Starting BOT server...")
     Thread(target=try_connect, daemon=True).start()
     if(not gm.STRIKES_FILE.exists()):
         gm.STRIKES_FILE.write_text("{}")
