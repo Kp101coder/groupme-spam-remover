@@ -5,7 +5,7 @@ import ollama
 MODEL = "deepseek-r1:14b"
 OLLAMA_HOST = "http://192.168.4.212:11434"  # Required; service will fail fast if unreachable
 
-ollama_model = None
+ollama_model : Optional[ollama.Client] = None
 
 def get_model() -> str:
     """Return the name of the active model."""
@@ -15,6 +15,8 @@ def connect() -> bool:
     global ollama_model
     try:
         ollama_model = ollama.Client(host=OLLAMA_HOST)
+        # Actually test the connection by calling list()
+        ollama_model.list()
     except Exception as e:
         ollama_model = None
         return False
@@ -33,10 +35,14 @@ def _model_exists(name: str) -> bool:
 
 def check_model_availability() -> bool:
     """Return True if the active model is available (may raise on client errors)."""
+    if ollama_model is None:
+        return False
     return _model_exists(MODEL)
 
 def pull_model() -> None:
     """Pull the configured model. Caller should handle exceptions."""
+    if ollama_model is None:
+        raise RuntimeError("Ollama client is not connected")
     ollama_model.pull(MODEL)
 
 def set_model(model_name: str) -> str:
@@ -72,6 +78,8 @@ def parse_yes_no_label(text: str) -> Optional[str]:
 
 def list_models() -> dict:
     """Return ollama list() output (dict)."""
+    if ollama_model is None:
+        return {"models": []}
     data : ollama.ListResponse = ollama_model.list()
     data_as_dict = _coerce_to_dict(data)
     return data_as_dict
@@ -79,11 +87,15 @@ def list_models() -> dict:
 
 def pull_model_name(name: str) -> None:
     """Pull an arbitrary model by name."""
+    if ollama_model is None:
+        raise RuntimeError("Ollama client is not connected")
     ollama_model.pull(name)
 
 
 def remove_model(name: str) -> None:
     """Remove an arbitrary model by name."""
+    if ollama_model is None:
+        raise RuntimeError("Ollama client is not connected")
     ollama_model.delete(name)
 
 
@@ -148,6 +160,10 @@ def prompt(message: str, system_message: str = None, data: List[dict] = None, tr
     Returns a dict containing fields such as model, content, thinking, token counts,
     and timing information (converted to seconds). Callers should handle errors.
     """
+    # Check if client is connected
+    if ollama_model is None:
+        return None
+    
     messages = []
 
     if system_message:

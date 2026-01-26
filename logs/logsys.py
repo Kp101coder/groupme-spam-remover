@@ -5,15 +5,32 @@ from pathlib import Path
 # Setup rotating log per process start inside `logs` dir
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+MAX_LOG_FILES = 50  # Maximum number of log files to retain
+
 def _next_log_path():
-    existing = [p.name for p in LOG_DIR.iterdir() if p.is_file() and p.name.startswith("log_") and p.suffix==".log"]
-    nums = []
-    for n in existing:
-        try:
-            nums.append(int(n.split("_")[1].split(".")[0]))
-        except Exception:
-            continue
-    next_idx = max(nums)+1 if nums else 0
+    # Get all log files and their numeric indices
+    log_files = []
+    for p in LOG_DIR.iterdir():
+        if p.is_file() and p.name.startswith("log_") and p.suffix == ".log":
+            try:
+                num = int(p.stem.split("_")[1])  # Extract number from log_X.log
+                log_files.append((num, p))
+            except (ValueError, IndexError):
+                continue
+    
+    # Determine next index
+    next_idx = max(num for num, _ in log_files) + 1 if log_files else 0
+    
+    # Delete logs more than MAX_LOG_FILES behind current index
+    threshold = next_idx - MAX_LOG_FILES
+    path : Path
+    for num, path in log_files:
+        if num < threshold:
+            try:
+                path.unlink()
+            except Exception:
+                pass  # Ignore deletion errors
+    
     return LOG_DIR / f"log_{next_idx}.log"
 
 LOG_FILE = _next_log_path()

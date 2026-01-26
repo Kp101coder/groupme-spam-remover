@@ -95,42 +95,91 @@ def normalize_text(text: str):
 
 def contains_banned(text: str):
     if not text or text.isspace() or text == "":
+        log_and_print("⚪ Empty message, skipping spam check")
         return False
+    
+    log_and_print(f"🔍 Checking message for spam: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+    
     # Use original text (not normalized) so the model can leverage phone numbers, $ amounts, etc.
     if ai.ollama_model is None:
-        log_and_print("❌ Ollama model is not connected.", level="error")
-        if "tickets" in text.lower() or "sell" in text.lower():
-            log_and_print("⚠️ Fallback: 'tickets' or 'sell' keyword found, marking as banned.")
+        log_and_print("⚠️ Ollama model is not connected, using fallback keyword detection", level="warning")
+        # Enhanced fallback logic with more spam indicators
+        lower_text = text.lower()
+        spam_keywords = [
+            ("ticket", "sell"), ("ticket", "dm"), ("ticket", "text"),
+            ("selling", "dm"), ("selling", "text"), ("selling", "venmo"),
+            ("buying", "dm"), ("buying", "text"),
+            ("macbook", "dm"), ("iphone", "sell"), ("laptop", "sell")
+        ]
+        
+        # Check for combinations of spam keywords
+        for keyword1, keyword2 in spam_keywords:
+            if keyword1 in lower_text and keyword2 in lower_text:
+                log_and_print(f"✅ Fallback detected spam: found '{keyword1}' + '{keyword2}'")
+                return True
+        
+        # Check for phone numbers with selling context
+        import re
+        phone_pattern = r'\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}'
+        if re.search(phone_pattern, text) and any(word in lower_text for word in ["sell", "selling", "ticket", "dm", "text me"]):
+            log_and_print("✅ Fallback detected spam: phone number with selling keywords")
             return True
         
-    response = ai.prompt(
-        text,
-        SYSTEM_MESSAGE,
-        gm.training.get("messages", []),
-        "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.",
-        "End of examples. Classify the next message. Respond with only Yes or No.",
-    )
+        log_and_print("✅ Fallback check: message appears clean")
+        return False
+    
+    # AI is available, use it
+    try:
+        response = ai.prompt(
+            text,
+            SYSTEM_MESSAGE,
+            gm.training.get("messages", []),
+            "Here are labeled examples. Treat assistant labels 'Yes' as spam and 'No' as not spam.",
+            "End of examples. Classify the next message. Respond with only Yes or No.",
+        )
 
-    log_and_print(f"Model response: {response}")
-    if not response:
-        return False
-    content = ""
-    if isinstance(response, dict):
-        content = (response.get("content") or "").strip().lower()
-        if not content:
+        log_and_print(f"🤖 Model response: {response}")
+        if not response:
+            log_and_print("⚠️ Model returned no response, assuming message is clean", level="warning")
+            return False
+        
+        content = ""
+        if isinstance(response, dict):
+            content = (response.get("content") or "").strip().lower()
+            if not content:
+                content = str(response).strip().lower()
+        else:
             content = str(response).strip().lower()
-    else:
-        content = str(response).strip().lower()
-    if not content:
+        
+        if not content:
+            log_and_print("⚠️ Empty model response, assuming message is clean", level="warning")
+            return False
+        
+        answer = content
+        if answer.startswith("yes"):
+            log_and_print("🚨 SPAM DETECTED by AI model")
+            return True
+        if answer.startswith("no"):
+            log_and_print("✅ Message marked clean by AI model")
+            return False
+        
+        # Fallback: contain check if model added extra text
+        result = "yes" in answer and "no" not in answer
+        if result:
+            log_and_print("🚨 SPAM DETECTED by AI model (fuzzy match)")
+        else:
+            log_and_print("✅ Message marked clean by AI model (fuzzy match)")
+        return result
+    except Exception as e:
+        log_and_print(f"❌ Error during AI check: {e}", level="error")
+        log_and_print("⚠️ Falling back to keyword detection due to error", level="warning")
+        # Fallback to keyword detection on error
+        lower_text = text.lower()
+        if any(word in lower_text for word in ["ticket", "sell", "selling"]) and any(word in lower_text for word in ["dm", "text", "venmo", "cash app"]):
+            log_and_print("✅ Fallback detected spam after AI error")
+            return True
+        log_and_print("✅ Fallback check: message appears clean after AI error")
         return False
-    answer = content
-    if answer.startswith("yes"):
-        log_and_print("Banned content detected by model.")
-        return True
-    if answer.startswith("no"):
-        return False
-    # Fallback: contain check if model added extra text
-    return "yes" in answer and "no" not in answer
 
 
 @app.post("/kill-da-clanker")
@@ -152,9 +201,10 @@ async def callback(request: Request):
     if "@thanos" in text.lower():
         # Use groupme helper's Thanos flow and pass ai.prompt as the prompt function
         if ai.ollama_model is None:
-            log_and_print("❌ Ollama model is not connected.", level="error")
-            gm.post_bot_message("❌ Ollama model is not connected. Cannot process @thanos command.")
+            log_and_print("❌ Ollama model is not connected, cannot process @thanos command", level="error")
+            gm.post_bot_message("❌ AI is currently offline. Cannot process @thanos command. Please try again later.")
             return {"status": "ollama_not_connected"}
+        log_and_print(f"🤖 Processing @thanos command from {name}")
         gm.thanos(name, user_id, text, ai.prompt)
         return {"status": "bot_mentioned"}
     
@@ -210,7 +260,7 @@ async def callback(request: Request):
 def try_connect():
     while True:
         if not ai.connect():
-            log_and_print(f"❌ Failed to connect to Ollama host at {ai.OLLAMA_HOST}. Exiting.", level="error")
+            log_and_print(f"❌ Failed to connect to Ollama host at {ai.OLLAMA_HOST}.", level="error")
             time.sleep(60*60*3)
         else:
             log_and_print(f"Ollama client configured for {ai.OLLAMA_HOST}. Using model: {ai.get_model()}")
