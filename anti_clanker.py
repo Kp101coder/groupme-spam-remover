@@ -184,77 +184,118 @@ def contains_banned(text: str):
 
 @app.post("/kill-da-clanker")
 async def callback(request: Request):
-    client_ip = _get_client_ip(request)
-    payload = await request.json()
-    user_id = payload.get("user_id")
+    try:
+        client_ip = _get_client_ip(request)
+        payload = await request.json()
+        user_id = payload.get("user_id")
 
-    # Ignore bot's own messages
-    if user_id == "0" or user_id == str(gm.BOT_ID):
-        return {"status": "ignored"}
+        # Ignore bot's own messages
+        if user_id == "0" or user_id == str(gm.BOT_ID):
+            return {"status": "ignored"}
 
-    name = payload.get("name", "Unknown")
-    text = payload.get("text", "")
-    message_id = payload.get("id")
+        name = payload.get("name", "Unknown")
+        text = payload.get("text", "")
+        message_id = payload.get("id")
 
-    log_and_print(f"📩 Message from {name}/{user_id} (IP: {client_ip}): '{text}'")
+        log_and_print(f"📩 Message from {name}/{user_id} (IP: {client_ip}): '{text}'")
 
-    if "@thanos" in text.lower():
-        # Use groupme helper's Thanos flow and pass ai.prompt as the prompt function
-        if ai.ollama_model is None:
-            log_and_print("❌ Ollama model is not connected, cannot process @thanos command", level="error")
-            gm.post_bot_message("❌ AI is currently offline. Cannot process @thanos command. Please try again later.")
-            return {"status": "ollama_not_connected"}
-        log_and_print(f"🤖 Processing @thanos command from {name}")
-        gm.thanos(name, user_id, text, ai.prompt)
-        return {"status": "bot_mentioned"}
-    
-    if name.lower() in admins:
-        lower_text = text.lower()
-        if "@undo" in lower_text:
-            gm.undo_last_action()
-            return {"status": "undo"}
-        # Handle @ignore First Last
-        if "@ignore" in lower_text:
-            name = lower_text[lower_text.find(" ") + 1:].strip()
+        if "@thanos" in text.lower():
+            # Use groupme helper's Thanos flow and pass ai.prompt as the prompt function
+            if ai.ollama_model is None:
+                log_and_print("❌ Ollama model is not connected, cannot process @thanos command", level="error")
+                gm.post_bot_message("❌ AI is currently offline. Cannot process @thanos command. Please try again later.")
+                return {"status": "ollama_not_connected"}
+            try:
+                log_and_print(f"🤖 Processing @thanos command from {name}")
+                gm.thanos(name, user_id, text, ai.prompt)
+                return {"status": "bot_mentioned"}
+            except Exception as e:
+                log_and_print(f"❌ Error processing @thanos command: {e}", level="error")
+                log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+                return {"status": "thanos_error", "error": str(e)}
+        
+        if name.lower() in admins:
+            lower_text = text.lower()
+            if "@undo" in lower_text:
+                try:
+                    gm.undo_last_action()
+                    return {"status": "undo"}
+                except Exception as e:
+                    log_and_print(f"❌ Error processing @undo: {e}", level="error")
+                    return {"status": "undo_error", "error": str(e)}
+            # Handle @ignore First Last
+            if "@ignore" in lower_text:
+                try:
+                    name = lower_text[lower_text.find(" ") + 1:].strip()
 
-            if name:
-                added = gm.add_to_ignored(name)
-                if added:
-                    gm.post_bot_message(f"Added '{name}' to the ignore list.")
-                    log_and_print(f"🚫 Added '{name}' to ignore list.")
-                    return {"status": "ignored_added", "user": name}
-                else:
-                    gm.post_bot_message(f"'{name}' is already in the ignore list or invalid.")
-                    log_and_print(f"🚫 '{name}' is already in ignore list or invalid.")
-                    return {"status": "ignored_exists", "user": name}
+                    if name:
+                        added = gm.add_to_ignored(name)
+                        if added:
+                            gm.post_bot_message(f"Added '{name}' to the ignore list.")
+                            log_and_print(f"🚫 Added '{name}' to ignore list.")
+                            return {"status": "ignored_added", "user": name}
+                        else:
+                            gm.post_bot_message(f"'{name}' is already in the ignore list or invalid.")
+                            log_and_print(f"🚫 '{name}' is already in ignore list or invalid.")
+                            return {"status": "ignored_exists", "user": name}
+                except Exception as e:
+                    log_and_print(f"❌ Error processing @ignore: {e}", level="error")
+                    log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+                    return {"status": "ignore_error", "error": str(e)}
                 
-        if "@ban" in lower_text:
-            name = lower_text[lower_text.find(" ") + 1:].strip()
-            if name:
-                banned_id = gm.get_member_id(name)
-                gm.ban(banned_id)
-                if banned_id:
-                    gm.post_bot_message(f"Banned user '{name}'.")
-                    log_and_print(f"🚫 Banned user '{name}'.")
-                    return {"status": "banned", "user": name}
-                else:
-                    gm.post_bot_message(f"User '{name}' not found or already banned.")
-                    log_and_print(f"🚫 User '{name}' not found or already banned.")
-                    return {"status": "ban_failed", "user": name}
+            if "@ban" in lower_text:
+                try:
+                    name = lower_text[lower_text.find(" ") + 1:].strip()
+                    if name:
+                        banned_id = gm.get_member_id(name)
+                        gm.ban(banned_id)
+                        if banned_id:
+                            gm.post_bot_message(f"Banned user '{name}'.")
+                            log_and_print(f"🚫 Banned user '{name}'.")
+                            return {"status": "banned", "user": name}
+                        else:
+                            gm.post_bot_message(f"User '{name}' not found or already banned.")
+                            log_and_print(f"🚫 User '{name}' not found or already banned.")
+                            return {"status": "ban_failed", "user": name}
+                except Exception as e:
+                    log_and_print(f"❌ Error processing @ban: {e}", level="error")
+                    log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+                    return {"status": "ban_error", "error": str(e)}
 
-    if name.lower() in gm.ignored:
-        log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
-        gm.like_message(message_id)
-        return {"status": "ignored"}
+        try:
+            if name.lower() in gm.ignored:
+                log_and_print(f"🚫 Ignored user {name}/{user_id}, liking their message.")
+                gm.like_message(message_id)
+                return {"status": "ignored"}
+        except Exception as e:
+            log_and_print(f"❌ Error checking ignored list or liking message: {e}", level="error")
+            # Continue with spam check even if like fails
 
-    if not text or not contains_banned(text):
-        return {"status": "ok"}
+        try:
+            if not text or not contains_banned(text):
+                return {"status": "ok"}
+        except Exception as e:
+            log_and_print(f"❌ Error during spam check: {e}", level="error")
+            log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+            return {"status": "spam_check_error", "error": str(e)}
 
-    gm.reckon(name, user_id, text, message_id)
+        try:
+            gm.reckon(name, user_id, text, message_id)
+            Thread(target=gm.subgroup_reckon_worker, args=(name, user_id, contains_banned), daemon=True).start()
+        except Exception as e:
+            log_and_print(f"❌ Error during reckon/moderation: {e}", level="error")
+            log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+            return {"status": "reckon_error", "error": str(e)}
 
-    Thread(target=gm.subgroup_reckon_worker, args=(name, user_id, contains_banned), daemon=True).start()
-
-    return {"status": "processed"}
+        return {"status": "processed"}
+    
+    except json.JSONDecodeError as e:
+        log_and_print(f"❌ Invalid JSON in request: {e}", level="error")
+        return {"status": "json_error", "error": "Invalid JSON"}
+    except Exception as e:
+        log_and_print(f"❌ Unexpected error in callback: {e}", level="error")
+        log_and_print(f"Traceback: {traceback.format_exc()}", level="error")
+        return {"status": "callback_error", "error": str(e)}
 
 
 def try_connect():
