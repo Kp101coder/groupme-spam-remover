@@ -197,6 +197,8 @@ def reckon(name, user_id, text, message_id):
     global last_action
     strikes[user_id] = strikes.get(user_id, 0) + 1
     _save_file(strikes, STRIKES_FILE)
+    # Delete the spam message
+    delete_message(message_id)
     if not doBans or strikes[user_id] <= WARN_STRIKES:
         send_dm(user_id, f"@{name}, warning: spam detected, issuing reckoning {strikes[user_id]} for {text} in {message_id}.")
         last_action = {"action": "strike", "user": name, "user_id": user_id}
@@ -204,12 +206,13 @@ def reckon(name, user_id, text, message_id):
         membership_id, _ = get_membership_id(user_id)
         last_action = {"action": "remove", "user": name, "user_id": user_id}
         if membership_id and remove_member(membership_id):
-            post_bot_message(f"@{name} has been thanos snapped.")
+            #post_bot_message(f"@{name} has been thanos snapped.")
             send_dm(user_id, f"@{name}, you have been removed from the group due to repeated spam violations.")
             strikes.pop(user_id, None)
             _save_file(strikes, STRIKES_FILE)
             if membership_id and ban(membership_id):
-                post_bot_message(f"@{name} has been banned from rejoining.")
+                pass
+                #post_bot_message(f"@{name} has been banned from rejoining.")
             else:
                 banned.append(user_id)
                 _save_file({"banned": banned}, BANNED_FILE)

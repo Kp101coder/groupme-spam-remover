@@ -314,7 +314,7 @@ def try_connect():
 # Entry point
 if __name__ == "__main__":
     log_and_print("🚀 Starting BOT server...")
-    Thread(target=try_connect, daemon=True).start()
+    #Thread(target=try_connect, daemon=True).start()
     if(not gm.STRIKES_FILE.exists()):
         gm.STRIKES_FILE.write_text("{}")
     if(not gm.CONVERSATIONS_FILE.exists()):
@@ -324,4 +324,4 @@ if __name__ == "__main__":
         gm.TRAINING_FILE.write_text(json.dumps({"messages": []}))
     # start invite acceptor from groupme helpers
     Thread(target=gm.accept_invites, daemon=True).start()
-    uvicorn.run("anti_clanker:app", host="127.0.0.1", port=8003, reload=False) #, ssl_keyfile='/etc/letsencrypt/live/vaayuronics.com/privkey.pem', ssl_certfile='/etc/letsencrypt/live/vaayuronics.com/fullchain.pem')
+    uvicorn.run("anti_clanker:app", host="127.0.0.1", port=8003, reload=False)

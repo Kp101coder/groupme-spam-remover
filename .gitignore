@@ -208,3 +208,4 @@ __marimo__/
 
 # Access Token Files
 */*.key
+*/*.json
